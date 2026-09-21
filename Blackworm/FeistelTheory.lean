@@ -361,7 +361,7 @@ dynamically generated cipher chain over multiple blocks, each block using
 a different cipher set. -/
 def encryptChain : List (RoundSpec α) → Block α → Block α
   | [], b => b
-  | spec :: rest, b => encryptChain xor rest (round xor spec.F spec.k b)
+  | spec :: rest, b => encryptChain rest (round xor spec.F spec.k b)
 
 /-- Undo a heterogeneous chain of rounds/blocks. Note the recursion peels
 `spec` off the *front* of the list but applies its inverse only *after*
@@ -372,7 +372,7 @@ cipher sets must be undone in the reverse of the order they were applied
 (made fully explicit by `decryptChain_eq_foldl_reverse` below). -/
 def decryptChain : List (RoundSpec α) → Block α → Block α
   | [], b => b
-  | spec :: rest, b => roundInv xor spec.F spec.k (decryptChain xor rest b)
+  | spec :: rest, b => roundInv xor spec.F spec.k (decryptChain rest b)
 
 /-- **Chain correctness (decrypt after encrypt)**: for any heterogeneous
 list of per-round/per-block cipher sets, decrypting immediately after
