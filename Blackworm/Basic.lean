@@ -50,6 +50,25 @@ def feistelCipherIO (blocks : List Block) (f : ByteArray → IO ByteArray) : IO 
   let results ← blocks.mapM (fun b => feistelRoundIO b f)
   return results
 
+-- Inverse of a single Feistel round: undoes `feistelRoundIO` for the same `f`.
+def feistelRoundInvIO (b : Block) (f : ByteArray → IO ByteArray) : IO Block := do
+  let fResult ← f b.left
+  return { left := xorByteArrays b.right fResult, right := b.left }
+
+-- A dynamically generated cipher *chain*: run a block through a sequence of
+-- rounds where each round may use a *different* function (its own cipher
+-- set), rather than one shared function applied every round. `specs` is
+-- applied left-to-right, one function per round/block.
+def feistelChainIO (specs : List (ByteArray → IO ByteArray)) (b : Block) : IO Block :=
+  specs.foldlM (fun b f => feistelRoundIO b f) b
+
+-- Invert `feistelChainIO`: the round applied *first* during encryption must
+-- be undone *last* during decryption, so decryption walks the **transpose**
+-- (reverse) of the function-set list used to encrypt, undoing each round in
+-- turn with `feistelRoundInvIO`.
+def feistelDechainIO (specs : List (ByteArray → IO ByteArray)) (b : Block) : IO Block :=
+  specs.reverse.foldlM (fun b f => feistelRoundInvIO b f) b
+
 -- Wrapper functions for specific crypto operations
 
 -- Hash256 as a Feistel function
@@ -82,4 +101,15 @@ def feistelWithHKDF (salt : ByteArray) (info : ByteArray) (length : Nat) (data :
 -- def exampleCipherWithAES : IO (List Block) := do
 --   let key : Crypto.AES256Key := { bytes := ByteArray.mk #[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] }
 --   feistelCipherIO (blockList 6) (feistelWithAES256ECB key)
+--
+-- def exampleChainWithMixedCipherSets : IO Block := do
+--   let key : Crypto.AES256Key := { bytes := ByteArray.mk #[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] }
+--   let block : Block := { left := ByteArray.mk #[], right := ByteArray.mk #[] }
+--   -- Each entry is a different cipher set/round function -- a dynamically
+--   -- generated chain across multiple blocks/rounds.
+--   let specs : List (ByteArray → IO ByteArray) :=
+--     [feistelWithHash256, feistelWithAES256ECB key, feistelWithHash3_256]
+--   let ciphertext ← feistelChainIO specs block
+--   -- Decryption requires the *transpose* (reverse) of `specs`.
+--   feistelDechainIO specs ciphertext
 
