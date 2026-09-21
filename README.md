@@ -11,3 +11,7 @@ To set up your new GitHub repository, follow these steps:
 * In the **Source** dropdown menu, select "GitHub Actions".
 
 After following the steps above, you can remove this section from the README file.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0. See the [LICENSE](LICENSE) file for details.
