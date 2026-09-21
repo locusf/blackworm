@@ -59,7 +59,7 @@ structure Block (α : Type u) where
   right : α
   deriving Repr, DecidableEq
 
-variable (xor : α → α → α) (hcancel : Cancellative xor)
+variable (xor : α → α → α)
 
 /-- One Feistel round with round function `F` and round key `k`: swap the
 halves, and mix the untouched half into the other half via `F k`. This is
@@ -78,7 +78,7 @@ round functions that are not themselves invertible, such as a hash
 function (`feistelWithHash256`) or AES-256 in ECB mode
 (`feistelWithAES256ECB`). This is the classical property that makes
 Feistel networks useful: `F` can be arbitrarily complex. -/
-theorem round_left_inv (F : α → α → α) (k : α) (b : Block α) :
+theorem round_left_inv (hcancel : Cancellative xor) (F : α → α → α) (k : α) (b : Block α) :
     roundInv xor F k (round xor F k b) = b := by
   show
     ({ left := xor (xor b.left (F k b.right)) (F k b.right), right := b.right } : Block α) = b
@@ -86,7 +86,7 @@ theorem round_left_inv (F : α → α → α) (k : α) (b : Block α) :
 
 /-- The reverse direction: encrypting right after decrypting also recovers
 the original block. -/
-theorem round_right_inv (F : α → α → α) (k : α) (b : Block α) :
+theorem round_right_inv (hcancel : Cancellative xor) (F : α → α → α) (k : α) (b : Block α) :
     round xor F k (roundInv xor F k b) = b := by
   show
     ({ left := b.left, right := xor (xor b.right (F k b.left)) (F k b.left) } : Block α) = b
@@ -109,7 +109,7 @@ def decryptRounds (F : α → α → α) : List α → Block α → Block α
 /-- **Network correctness (decrypt after encrypt)**: for any round function
 `F` and any list of round keys, decrypting immediately after encrypting
 recovers the original block, no matter how many rounds were used. -/
-theorem decryptRounds_encryptRounds (F : α → α → α) :
+theorem decryptRounds_encryptRounds (hcancel : Cancellative xor) (F : α → α → α) :
     ∀ (keys : List α) (b : Block α),
       decryptRounds xor F keys (encryptRounds xor F keys b) = b := by
   intro keys
@@ -124,7 +124,7 @@ theorem decryptRounds_encryptRounds (F : α → α → α) :
 
 /-- **Network correctness (encrypt after decrypt)**: the reverse direction
 of `decryptRounds_encryptRounds`. -/
-theorem encryptRounds_decryptRounds (F : α → α → α) :
+theorem encryptRounds_decryptRounds (hcancel : Cancellative xor) (F : α → α → α) :
     ∀ (keys : List α) (b : Block α),
       encryptRounds xor F keys (decryptRounds xor F keys b) = b := by
   intro keys
@@ -143,7 +143,7 @@ injective, so every ciphertext block corresponds to a unique plaintext
 block. This is what justifies calling `Blackworm.Basic.feistelCipher` a
 *cipher* (as opposed to a lossy hash) no matter how the round count or
 round function are "dynamically" generated. -/
-theorem encryptRounds_injective (F : α → α → α) (keys : List α) :
+theorem encryptRounds_injective (hcancel : Cancellative xor) (F : α → α → α) (keys : List α) :
     ∀ b₁ b₂, encryptRounds xor F keys b₁ = encryptRounds xor F keys b₂ → b₁ = b₂ := by
   intro b₁ b₂ h
   have h2 := congrArg (decryptRounds xor F keys) h
@@ -154,7 +154,7 @@ theorem encryptRounds_injective (F : α → α → α) (keys : List α) :
 genuine two-sided inverse of `encryptRounds`, i.e. `encryptRounds xor F
 keys` is a bijection on `Block α` with explicit inverse `decryptRounds xor
 F keys`. -/
-theorem encryptRounds_has_two_sided_inverse (F : α → α → α) (keys : List α) :
+theorem encryptRounds_has_two_sided_inverse (hcancel : Cancellative xor) (F : α → α → α) (keys : List α) :
     (∀ b, decryptRounds xor F keys (encryptRounds xor F keys b) = b) ∧
       ∀ b, encryptRounds xor F keys (decryptRounds xor F keys b) = b :=
   ⟨decryptRounds_encryptRounds xor hcancel F keys, encryptRounds_decryptRounds xor hcancel F keys⟩
@@ -252,7 +252,7 @@ end KeyDerivation
 /-! ## Full cipher: key derivation + Feistel network -/
 section FullCipher
 
-variable {α : Type u} (xor : α → α → α) (hcancel : Cancellative xor)
+variable {α : Type u} (xor : α → α → α)
 
 /-- The full dynamic block cipher: derive `rounds` subkeys from a master
 key via `prf`, then run the Feistel network keyed by that schedule. This
@@ -273,14 +273,16 @@ key-derivation function `prf`, any master key and any round count,
 decrypting with the same master key and round count recovers the original
 plaintext block. This is the end-to-end guarantee that a caller of the
 dynamically generated cipher relies on. -/
-theorem feistelDecrypt_feistelEncrypt (F : α → α → α) (prf : α → Nat → α) (master : α)
+theorem feistelDecrypt_feistelEncrypt (hcancel : Cancellative xor)
+    (F : α → α → α) (prf : α → Nat → α) (master : α)
     (rounds : Nat) (b : Block α) :
     feistelDecrypt xor F prf master rounds (feistelEncrypt xor F prf master rounds b) = b :=
   decryptRounds_encryptRounds xor hcancel F (deriveKeys prf master rounds) b
 
 /-- Corollary: encryption of the full dynamically-keyed cipher is
 injective, for any round function and any key-derivation function. -/
-theorem feistelEncrypt_injective (F : α → α → α) (prf : α → Nat → α) (master : α) (rounds : Nat) :
+theorem feistelEncrypt_injective (hcancel : Cancellative xor)
+    (F : α → α → α) (prf : α → Nat → α) (master : α) (rounds : Nat) :
     ∀ b₁ b₂,
       feistelEncrypt xor F prf master rounds b₁ = feistelEncrypt xor F prf master rounds b₂ →
         b₁ = b₂ :=
