@@ -12,6 +12,18 @@ distinctness of the generated schedule (`deriveKeys_length`,
 `deriveKeys_nodup`), tying everything together in the end-to-end theorem
 `feistelDecrypt_feistelEncrypt`.
 
+It further generalizes the network to a **dynamically generated cipher
+chain**: `CipherSet`/`combineCipherSet` let a single round combine multiple
+round-function pairs (e.g. several primitives mixed into the same round),
+and `RoundSpec`/`encryptChain`/`decryptChain` let each round/block in the
+chain use a completely different cipher set instead of one function shared
+by every round. The chain's correctness and injectivity are proved exactly
+as for the fixed-`F` case, and `decryptChain_eq_foldl_reverse` makes
+explicit the **transpose** required to invert such a chain: decryption must
+process the per-block cipher sets in the reverse of the order they were
+applied. `Blackworm/Basic.lean` mirrors this concretely with
+`feistelChainIO`/`feistelDechainIO`.
+
 ## GitHub configuration
 
 To set up your new GitHub repository, follow these steps:

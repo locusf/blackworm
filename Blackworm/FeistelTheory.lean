@@ -35,6 +35,16 @@ instance of the abstract `Cancellative` operator studied below (and the
   the generated schedule.
 * `FullCipher` — glues key derivation and the Feistel network together and
   proves the end-to-end correctness theorem `feistelDecrypt_feistelEncrypt`.
+* `MultiRound` — a `CipherSet`: multiple `(round function, round key)` pairs
+  combined (xor-folded) within a *single* round, instead of one primitive
+  per round.
+* `Chain` — generalizes `encryptRounds`/`decryptRounds` (one fixed `F`
+  shared by every round) to `encryptChain`/`decryptChain` over a
+  heterogeneous `List (RoundSpec α)`, so that a dynamically generated
+  cipher chain can use a **different cipher set per round/block**. Proves
+  the same correctness/injectivity results, plus the explicit **transpose**
+  theorem `decryptChain_eq_foldl_reverse`: inverting such a chain requires
+  processing the per-block cipher sets in *reverse* order.
 -/
 
 namespace Blackworm.Feistel
@@ -291,5 +301,155 @@ theorem feistelEncrypt_injective (hcancel : Cancellative xor)
   encryptRounds_injective xor hcancel F (deriveKeys prf master rounds)
 
 end FullCipher
+
+/-! ## Multiple round-function pairs combined within a single round -/
+section MultiRound
+
+variable {α : Type u} (xor : α → α → α)
+
+/-- A "cipher set": a list of `(round function, round key)` pairs that are
+all applied to the *same* half within a single round and combined via
+`xor`, instead of a single `(F, k)` pair per round. This models drawing on
+several primitives from the pool simultaneously in one round (e.g. a hash
+function and a block cipher both mixed into the same round), rather than
+one primitive per round. -/
+abbrev CipherSet (α : Type u) := List ((α → α → α) × α)
+
+/-- Combine the outputs of every `(F, k)` pair in a cipher set, applied to
+the same input `x`, via `xor`-folding. An empty cipher set is the identity
+(a degenerate, zero-primitive round). -/
+def combineCipherSet : CipherSet α → α → α
+  | [], x => x
+  | (F, k) :: rest, x => xor (F k x) (combineCipherSet rest x)
+
+/-- Every cipher set collapses to a single, ordinary round function taking
+an (unused) placeholder key, so a round built from a cipher set is just an
+instance of `round` — and therefore inherits `round_left_inv`,
+`round_right_inv`, etc. for free. -/
+def cipherSetF (cs : CipherSet α) : α → α → α :=
+  fun _ x => combineCipherSet xor cs x
+
+end MultiRound
+
+/-! ## A heterogeneous cipher chain: distinct round functions per round/block -/
+section Chain
+
+variable {α : Type u} (xor : α → α → α)
+
+/-- A round specification: a round function together with its round key.
+This generalizes `encryptRounds`/`decryptRounds`, which share one fixed `F`
+across all rounds, so that **each round/block in the dynamically generated
+cipher chain can use a completely different round function** (i.e. its own
+cipher set via `cipherSetF`), not merely a different key for a shared `F`. -/
+structure RoundSpec (α : Type u) where
+  F : α → α → α
+  k : α
+
+/-- Package a whole cipher set (multiple round-function pairs combined
+within one round, via `combineCipherSet`) as a single `RoundSpec`, so that
+a block/round in a chain can draw on several primitives at once. The
+`sentinelKey` slot is unused by `cipherSetF` (the real per-pair keys already
+live inside `cs`); it only satisfies `RoundSpec`'s bookkeeping key field. -/
+def RoundSpec.ofCipherSet (cs : CipherSet α) (sentinelKey : α) : RoundSpec α :=
+  { F := cipherSetF xor cs, k := sentinelKey }
+
+/-- Run a block through a *heterogeneous* chain of rounds/blocks, where
+each entry carries its own round function `spec.F` (possibly built from a
+whole cipher set via `cipherSetF`) and round key `spec.k`. This is the
+generalisation of `Blackworm.Basic.feistelCipher`/`feistelEncrypt` to a
+dynamically generated cipher chain over multiple blocks, each block using
+a different cipher set. -/
+def encryptChain : List (RoundSpec α) → Block α → Block α
+  | [], b => b
+  | spec :: rest, b => encryptChain xor rest (round xor spec.F spec.k b)
+
+/-- Undo a heterogeneous chain of rounds/blocks. Note the recursion peels
+`spec` off the *front* of the list but applies its inverse only *after*
+recursing on `rest` — i.e. the round applied *first* during encryption is
+undone *last* during decryption. This is precisely the **transpose**
+required to invert a dynamically generated cipher chain: the sequence of
+cipher sets must be undone in the reverse of the order they were applied
+(made fully explicit by `decryptChain_eq_foldl_reverse` below). -/
+def decryptChain : List (RoundSpec α) → Block α → Block α
+  | [], b => b
+  | spec :: rest, b => roundInv xor spec.F spec.k (decryptChain xor rest b)
+
+/-- **Chain correctness (decrypt after encrypt)**: for any heterogeneous
+list of per-round/per-block cipher sets, decrypting immediately after
+encrypting recovers the original block. -/
+theorem decryptChain_encryptChain (hcancel : Cancellative xor) :
+    ∀ (specs : List (RoundSpec α)) (b : Block α),
+      decryptChain xor specs (encryptChain xor specs b) = b := by
+  intro specs
+  induction specs with
+  | nil => intro b; rfl
+  | cons spec rest ih =>
+    intro b
+    show
+      roundInv xor spec.F spec.k
+        (decryptChain xor rest (encryptChain xor rest (round xor spec.F spec.k b))) = b
+    rw [ih (round xor spec.F spec.k b)]
+    exact round_left_inv xor hcancel spec.F spec.k b
+
+/-- **Chain correctness (encrypt after decrypt)**: the reverse direction of
+`decryptChain_encryptChain`. -/
+theorem encryptChain_decryptChain (hcancel : Cancellative xor) :
+    ∀ (specs : List (RoundSpec α)) (b : Block α),
+      encryptChain xor specs (decryptChain xor specs b) = b := by
+  intro specs
+  induction specs with
+  | nil => intro b; rfl
+  | cons spec rest ih =>
+    intro b
+    show
+      encryptChain xor rest
+        (round xor spec.F spec.k (roundInv xor spec.F spec.k (decryptChain xor rest b))) = b
+    rw [round_right_inv xor hcancel spec.F spec.k (decryptChain xor rest b)]
+    exact ih b
+
+/-- **Injectivity**: a heterogeneous cipher chain over any list of cipher
+sets never loses information, no matter how many distinct cipher sets are
+chained together or how they were dynamically chosen. -/
+theorem encryptChain_injective (hcancel : Cancellative xor) (specs : List (RoundSpec α)) :
+    ∀ b₁ b₂, encryptChain xor specs b₁ = encryptChain xor specs b₂ → b₁ = b₂ := by
+  intro b₁ b₂ h
+  have h2 := congrArg (decryptChain xor specs) h
+  rwa [decryptChain_encryptChain xor hcancel specs, decryptChain_encryptChain xor hcancel specs] at h2
+
+/-- `encryptRounds`/`decryptRounds` (a single fixed round function `F`, one
+key per round) are the special case of `encryptChain`/`decryptChain` where
+every round shares the same `F`. This confirms the chain construction is a
+strict generalisation of the original scaffold, not a different one. -/
+theorem encryptRounds_eq_encryptChain (F : α → α → α) (keys : List α) (b : Block α) :
+    encryptRounds xor F keys b = encryptChain xor (keys.map (fun k => (⟨F, k⟩ : RoundSpec α))) b := by
+  induction keys generalizing b with
+  | nil => rfl
+  | cons k ks ih => simp [encryptRounds, encryptChain, List.map_cons, ih]
+
+theorem decryptRounds_eq_decryptChain (F : α → α → α) (keys : List α) (b : Block α) :
+    decryptRounds xor F keys b = decryptChain xor (keys.map (fun k => (⟨F, k⟩ : RoundSpec α))) b := by
+  induction keys generalizing b with
+  | nil => rfl
+  | cons k ks ih => simp [decryptRounds, decryptChain, List.map_cons, ih]
+
+/-- **The transpose theorem, made explicit**: `decryptChain` (defined by
+structural recursion that peels specs off the *front*) is definitionally
+equal to an *iterative* left-fold that walks the *reversed* list of cipher
+sets, applying each `roundInv` in turn. This is the formal statement of
+"a transpose of the function set is needed" to invert a dynamically
+generated cipher chain over multiple blocks: whatever order the per-block
+cipher sets were dynamically generated/applied in, decryption must consume
+that same list *reversed*. -/
+theorem decryptChain_eq_foldl_reverse (specs : List (RoundSpec α)) (b : Block α) :
+    decryptChain xor specs b =
+      specs.reverse.foldl (fun acc spec => roundInv xor spec.F spec.k acc) b := by
+  induction specs generalizing b with
+  | nil => rfl
+  | cons spec rest ih =>
+    show roundInv xor spec.F spec.k (decryptChain xor rest b) =
+      (spec :: rest).reverse.foldl (fun acc spec => roundInv xor spec.F spec.k acc) b
+    rw [List.reverse_cons, List.foldl_append, List.foldl_cons, List.foldl_nil, ← ih b]
+
+end Chain
 
 end Blackworm.Feistel
