@@ -1,6 +1,6 @@
 name = "blackworm"
 version = "0.1.0"
-keywords = ["math"]
+keywords = ["math", "crypto"]
 defaultTargets = ["Blackworm"]
 
 [leanOptions]
@@ -16,3 +16,11 @@ rev = "v4.28.0-rc1"
 
 [[lean_lib]]
 name = "Blackworm"
+
+# OpenSSL FFI bindings
+[[foreign_library]]
+name = "openssl_crypto"
+includes = ["openssl/evp.h"]
+libs = ["ssl", "crypto"]
+libDirs = ["/usr/lib/x86_64-linux-gnu", "/usr/local/lib", "/opt/homebrew/opt/openssl/lib"]
+includeDirs = ["/usr/include", "/usr/local/include", "/opt/homebrew/opt/openssl/include"]

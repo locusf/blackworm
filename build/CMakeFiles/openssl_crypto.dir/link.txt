@@ -1,0 +1,1 @@
+/usr/bin/cc -fPIC -O3 -DNDEBUG -Wl,--dependency-file=CMakeFiles/openssl_crypto.dir/link.d -shared -Wl,-soname,libopenssl_crypto.so -o libopenssl_crypto.so CMakeFiles/openssl_crypto.dir/openssl_crypto.c.o  /usr/lib64/libssl.so /usr/lib64/libcrypto.so
