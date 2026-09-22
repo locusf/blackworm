@@ -70,6 +70,10 @@ lake build test             # generates Test/*.c and compiles the executable
 lake exe test                # run the suite; exits 0 iff every case passed
 ```
 
+See [the test visualization](docs/test-visualization.md) for diagrams of
+all eight executed cases, their inputs and assertions, and the runner's
+PASS/FAIL and exit-status flow.
+
 ## Visualization
 
 See [docs/cipher-visualization.md](docs/cipher-visualization.md) for Mermaid
