@@ -16,33 +16,38 @@ set(CMAKE_C_FLAGS_DEBUG "-g -O0")
 find_package(OpenSSL 3.0 REQUIRED)
 
 # Find Lean headers
-# Try multiple methods to locate Lean headers
-find_path(LEAN_INCLUDE_DIR lean/lean.h
-    HINTS
-        /home/user/.elan/toolchains/*/include
-        /usr/include
-        /usr/local/include
-        /opt/homebrew/include
-    NO_DEFAULT_PATH
-)
-
-# If still not found, try using lean --print-prefix
-if(NOT LEAN_INCLUDE_DIR)
-    find_program(LEAN_EXECUTABLE lean)
-    if(LEAN_EXECUTABLE)
-        execute_process(
-            COMMAND ${LEAN_EXECUTABLE} --print-prefix
-            OUTPUT_VARIABLE LEAN_PREFIX
-            OUTPUT_STRIP_TRAILING_WHITESPACE
-            ERROR_QUIET
+# Prefer `lean --print-prefix`, which resolves the toolchain pinned by
+# `lean-toolchain` (via elan) deterministically. Falling back to a glob over
+# every installed elan toolchain is unsafe: if more than one toolchain is
+# installed, it can silently pick headers from the wrong (e.g. much older)
+# Lean version, producing a library that is ABI-incompatible with the
+# `lean`/`lake`-built executables that actually load it.
+find_program(LEAN_EXECUTABLE lean)
+if(LEAN_EXECUTABLE)
+    execute_process(
+        COMMAND ${LEAN_EXECUTABLE} --print-prefix
+        OUTPUT_VARIABLE LEAN_PREFIX
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(LEAN_PREFIX)
+        find_path(LEAN_INCLUDE_DIR lean/lean.h
+            HINTS ${LEAN_PREFIX}/include
+            NO_DEFAULT_PATH
         )
-        if(LEAN_PREFIX)
-            find_path(LEAN_INCLUDE_DIR lean/lean.h
-                HINTS ${LEAN_PREFIX}/include
-                NO_DEFAULT_PATH
-            )
-        endif()
     endif()
+endif()
+
+# Last-resort fallback if `lean` wasn't on PATH at all.
+if(NOT LEAN_INCLUDE_DIR)
+    find_path(LEAN_INCLUDE_DIR lean/lean.h
+        HINTS
+            /home/user/.elan/toolchains/*/include
+            /usr/include
+            /usr/local/include
+            /opt/homebrew/include
+        NO_DEFAULT_PATH
+    )
 endif()
 
 # Final fallback

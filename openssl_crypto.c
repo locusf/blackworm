@@ -32,7 +32,7 @@ LEAN_EXPORT lean_obj_res openssl_sha256_hash(b_lean_obj_arg data) {
 
     lean_object *result = lean_alloc_sarray(1, hash_len, hash_len);
     memcpy((void *)lean_sarray_cptr(result), hash, hash_len);
-    return result;
+    return lean_io_result_mk_ok(result);
 }
 
 // SHA3-256 Hash
@@ -61,7 +61,7 @@ LEAN_EXPORT lean_obj_res openssl_sha3_256_hash(b_lean_obj_arg data) {
 
     lean_object *result = lean_alloc_sarray(1, hash_len, hash_len);
     memcpy((void *)lean_sarray_cptr(result), hash, hash_len);
-    return result;
+    return lean_io_result_mk_ok(result);
 }
 
 // AES-256-ECB Encrypt
@@ -100,7 +100,7 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_encrypt(b_lean_obj_arg key, b_lean_
     lean_object *result = lean_alloc_sarray(1, ciphertext_len, ciphertext_len);
     memcpy((void *)lean_sarray_cptr(result), out, ciphertext_len);
     free(out);
-    return result;
+    return lean_io_result_mk_ok(result);
 }
 
 // AES-256-ECB Decrypt
@@ -139,7 +139,7 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt(b_lean_obj_arg key, b_lean_
     lean_object *result = lean_alloc_sarray(1, plaintext_len, plaintext_len);
     memcpy((void *)lean_sarray_cptr(result), out, plaintext_len);
     free(out);
-    return result;
+    return lean_io_result_mk_ok(result);
 }
 
 // AES-256-CBC Encrypt
@@ -179,7 +179,7 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_encrypt(b_lean_obj_arg key, b_lean_
     lean_object *result = lean_alloc_sarray(1, ciphertext_len, ciphertext_len);
     memcpy((void *)lean_sarray_cptr(result), out, ciphertext_len);
     free(out);
-    return result;
+    return lean_io_result_mk_ok(result);
 }
 
 // AES-256-CBC Decrypt
@@ -219,7 +219,7 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_decrypt(b_lean_obj_arg key, b_lean_
     lean_object *result = lean_alloc_sarray(1, plaintext_len, plaintext_len);
     memcpy((void *)lean_sarray_cptr(result), out, plaintext_len);
     free(out);
-    return result;
+    return lean_io_result_mk_ok(result);
 }
 
 // AES-256-GCM Encrypt returns (ciphertext, tag)
@@ -280,7 +280,7 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_gcm_encrypt(b_lean_obj_arg key, b_lean_
     lean_ctor_set(pair, 1, t_obj);
 
     free(ciphertext);
-    return pair;
+    return lean_io_result_mk_ok(pair);
 }
 
 // AES-256-GCM Decrypt returns Option ByteArray
@@ -305,14 +305,14 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_gcm_decrypt(b_lean_obj_arg key, b_lean_
                            (unsigned char *)lean_sarray_cptr(iv))) {
         free(plaintext);
         EVP_CIPHER_CTX_free(ctx);
-        return lean_box(0);  // None
+        return lean_io_result_mk_ok(lean_box(0));  // None
     }
 
     if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, lean_sarray_size(tag),
                             (unsigned char *)lean_sarray_cptr(tag))) {
         free(plaintext);
         EVP_CIPHER_CTX_free(ctx);
-        return lean_box(0);  // None
+        return lean_io_result_mk_ok(lean_box(0));  // None
     }
 
     if (lean_sarray_size(aad) > 0) {
@@ -332,7 +332,7 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_gcm_decrypt(b_lean_obj_arg key, b_lean_
 
     if (ret <= 0) {
         free(plaintext);
-        return lean_box(0);  // None
+        return lean_io_result_mk_ok(lean_box(0));  // None
     }
 
     lean_object *p_obj = lean_alloc_sarray(1, plaintext_len, plaintext_len);
@@ -341,7 +341,7 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_gcm_decrypt(b_lean_obj_arg key, b_lean_
 
     lean_object *some = lean_alloc_ctor(1, 1, 0);
     lean_ctor_set(some, 0, p_obj);
-    return some;  // Some plaintext
+    return lean_io_result_mk_ok(some);  // Some plaintext
 }
 
 // ChaCha20-Poly1305 Encrypt
@@ -402,7 +402,7 @@ LEAN_EXPORT lean_obj_res openssl_chacha20_poly1305_encrypt(b_lean_obj_arg key, b
     lean_ctor_set(pair, 1, t_obj);
 
     free(ciphertext);
-    return pair;
+    return lean_io_result_mk_ok(pair);
 }
 
 // ChaCha20-Poly1305 Decrypt
@@ -427,14 +427,14 @@ LEAN_EXPORT lean_obj_res openssl_chacha20_poly1305_decrypt(b_lean_obj_arg key, b
                            (unsigned char *)lean_sarray_cptr(nonce))) {
         free(plaintext);
         EVP_CIPHER_CTX_free(ctx);
-        return lean_box(0);  // None
+        return lean_io_result_mk_ok(lean_box(0));  // None
     }
 
     if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, lean_sarray_size(tag),
                             (unsigned char *)lean_sarray_cptr(tag))) {
         free(plaintext);
         EVP_CIPHER_CTX_free(ctx);
-        return lean_box(0);  // None
+        return lean_io_result_mk_ok(lean_box(0));  // None
     }
 
     if (lean_sarray_size(aad) > 0) {
@@ -454,7 +454,7 @@ LEAN_EXPORT lean_obj_res openssl_chacha20_poly1305_decrypt(b_lean_obj_arg key, b
 
     if (ret <= 0) {
         free(plaintext);
-        return lean_box(0);  // None
+        return lean_io_result_mk_ok(lean_box(0));  // None
     }
 
     lean_object *p_obj = lean_alloc_sarray(1, plaintext_len, plaintext_len);
@@ -463,7 +463,7 @@ LEAN_EXPORT lean_obj_res openssl_chacha20_poly1305_decrypt(b_lean_obj_arg key, b
 
     lean_object *some = lean_alloc_ctor(1, 1, 0);
     lean_ctor_set(some, 0, p_obj);
-    return some;  // Some plaintext
+    return lean_io_result_mk_ok(some);  // Some plaintext
 }
 
 // Simpler HKDF implementation using EVP_HMAC
@@ -558,7 +558,7 @@ LEAN_EXPORT lean_obj_res openssl_hkdf_sha256(b_lean_obj_arg salt, b_lean_obj_arg
     lean_object *result = lean_alloc_sarray(1, out_len, out_len);
     memcpy((void *)lean_sarray_cptr(result), okm, out_len);
     free(okm);
-    return result;
+    return lean_io_result_mk_ok(result);
 }
 
 // PBKDF2 with SHA-256
@@ -584,5 +584,5 @@ LEAN_EXPORT lean_obj_res openssl_pbkdf2_sha256(b_lean_obj_arg password, b_lean_o
     lean_object *result = lean_alloc_sarray(1, klen, klen);
     memcpy((void *)lean_sarray_cptr(result), key, klen);
     free(key);
-    return result;
+    return lean_io_result_mk_ok(result);
 }

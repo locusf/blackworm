@@ -17,6 +17,34 @@ rev = "v4.28.0-rc1"
 [[lean_lib]]
 name = "Blackworm"
 
+# Benchmarking scaffolding: `Bench.lean` + `Bench/*.lean` (timing utilities
+# and the benchmark case suite), built as a library and exposed as the
+# `bench` executable below.
+[[lean_lib]]
+name = "Bench"
+
+# `lake exe bench` — see Bench.lean for CLI usage.
+#
+# NOTE: `[[foreign_library]]` below is not a real Lake TOML target kind (the
+# correct keyword is `extern_lib`, and `extern_lib` targets require a
+# `lakefile.lean`, since they run arbitrary build steps — they cannot be
+# declared in TOML), so that section has always been silently ignored by
+# `lake build`. The OpenSSL C FFI shared library is instead produced by the
+# separate CMake build (`./build.sh`, or
+# `cmake -S . -B build && cmake --build build`), which must be run at least
+# once (its output is also committed under `build/` for convenience) before
+# `lake build bench`/`lake exe bench` so `libopenssl_crypto.so` exists for
+# the linker below to find.
+[[lean_exe]]
+name = "bench"
+root = "Bench"
+moreLinkArgs = [
+  "build/libopenssl_crypto.so",
+  "-Wl,-rpath,/home/user/blackworm/build",
+  "/usr/lib64/libssl.so.3", "/usr/lib64/libcrypto.so.3",
+  "-Wl,--allow-shlib-undefined", "-rdynamic"
+]
+
 # OpenSSL FFI bindings
 [[foreign_library]]
 name = "openssl_crypto"
