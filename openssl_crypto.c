@@ -142,6 +142,61 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt(b_lean_obj_arg key, b_lean_
     return lean_io_result_mk_ok(result);
 }
 
+// AES-256-ECB Decrypt, PKCS#7 padding disabled.
+//
+// `openssl_aes_256_ecb_decrypt` above validates and strips PKCS#7 padding,
+// so it fails (fatally, since it's a hard panic) on any input that isn't
+// genuine padded ciphertext. Turning padding off makes AES-256-ECB
+// decryption a *total* keyed permutation over exact multiples of the AES
+// block size: every such input decrypts to some fixed-length output, with
+// no notion of "invalid ciphertext" to reject. That makes it safe to use as
+// an arbitrary one-way scrambling function (e.g. a Feistel round function)
+// on data that was never actually encrypted -- it just isn't "real"
+// decryption of anything in that case, exactly as legitimate a keyed
+// permutation as AES encryption used the same way.
+LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt_nopad(b_lean_obj_arg key, b_lean_obj_arg data) {
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    if (ctx == NULL) {
+        lean_internal_panic_out_of_memory();
+    }
+
+    unsigned char *out = malloc(lean_sarray_size(data) + 16);
+    if (out == NULL) {
+        EVP_CIPHER_CTX_free(ctx);
+        lean_internal_panic_out_of_memory();
+    }
+
+    int len = 0, out_len;
+
+    if (!EVP_DecryptInit_ex(ctx, EVP_aes_256_ecb(), NULL,
+                           (unsigned char *)lean_sarray_cptr(key), NULL)) {
+        free(out);
+        EVP_CIPHER_CTX_free(ctx);
+        lean_internal_panic("AES-256-ECB (no padding) decryption initialization failed");
+    }
+    EVP_CIPHER_CTX_set_padding(ctx, 0);
+    EVP_DecryptUpdate(ctx, out, &len,
+                      (unsigned char *)lean_sarray_cptr(data),
+                      lean_sarray_size(data));
+    out_len = len;
+    if (!EVP_DecryptFinal_ex(ctx, out + len, &len)) {
+        free(out);
+        EVP_CIPHER_CTX_free(ctx);
+        // With padding disabled this can only happen if the caller passed
+        // data whose length isn't a multiple of the AES block size; Lean
+        // callers validate that before reaching here (see
+        // `Crypto.decryptAES256ECBNoPad`).
+        lean_internal_panic("AES-256-ECB (no padding) decryption finalization failed -- input size was not a multiple of the AES block size");
+    }
+    out_len += len;
+    EVP_CIPHER_CTX_free(ctx);
+
+    lean_object *result = lean_alloc_sarray(1, out_len, out_len);
+    memcpy((void *)lean_sarray_cptr(result), out, out_len);
+    free(out);
+    return lean_io_result_mk_ok(result);
+}
+
 // AES-256-CBC Encrypt
 LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_encrypt(b_lean_obj_arg key, b_lean_obj_arg iv, b_lean_obj_arg plaintext) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
@@ -218,6 +273,49 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_decrypt(b_lean_obj_arg key, b_lean_
 
     lean_object *result = lean_alloc_sarray(1, plaintext_len, plaintext_len);
     memcpy((void *)lean_sarray_cptr(result), out, plaintext_len);
+    free(out);
+    return lean_io_result_mk_ok(result);
+}
+
+// AES-256-CBC Decrypt, PKCS#7 padding disabled. See
+// `openssl_aes_256_ecb_decrypt_nopad` above for why this is safe to call on
+// data that was never actually encrypted.
+LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_decrypt_nopad(b_lean_obj_arg key, b_lean_obj_arg iv, b_lean_obj_arg data) {
+    EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
+    if (ctx == NULL) {
+        lean_internal_panic_out_of_memory();
+    }
+
+    unsigned char *out = malloc(lean_sarray_size(data) + 16);
+    if (out == NULL) {
+        EVP_CIPHER_CTX_free(ctx);
+        lean_internal_panic_out_of_memory();
+    }
+
+    int len = 0, out_len;
+
+    if (!EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL,
+                           (unsigned char *)lean_sarray_cptr(key),
+                           (unsigned char *)lean_sarray_cptr(iv))) {
+        free(out);
+        EVP_CIPHER_CTX_free(ctx);
+        lean_internal_panic("AES-256-CBC (no padding) decryption initialization failed");
+    }
+    EVP_CIPHER_CTX_set_padding(ctx, 0);
+    EVP_DecryptUpdate(ctx, out, &len,
+                      (unsigned char *)lean_sarray_cptr(data),
+                      lean_sarray_size(data));
+    out_len = len;
+    if (!EVP_DecryptFinal_ex(ctx, out + len, &len)) {
+        free(out);
+        EVP_CIPHER_CTX_free(ctx);
+        lean_internal_panic("AES-256-CBC (no padding) decryption finalization failed -- input size was not a multiple of the AES block size");
+    }
+    out_len += len;
+    EVP_CIPHER_CTX_free(ctx);
+
+    lean_object *result = lean_alloc_sarray(1, out_len, out_len);
+    memcpy((void *)lean_sarray_cptr(result), out, out_len);
     free(out);
     return lean_io_result_mk_ok(result);
 }

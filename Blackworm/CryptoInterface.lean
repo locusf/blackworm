@@ -46,6 +46,20 @@ def decryptAES256ECB (key : AES256Key) (ciphertext : ByteArray) : IO ByteArray :
     throw (IO.userError "Invalid AES-256 key size")
   aes256ECBDecrypt key.bytes ciphertext
 
+-- AES-256-ECB decryption with PKCS#7 padding disabled: a total, always-
+-- succeeding keyed permutation over exact multiples of the AES block size
+-- (there is no notion of "invalid ciphertext" to reject once padding is
+-- off). Unlike `decryptAES256ECB`, this is safe to call on data that was
+-- never actually encrypted -- e.g. to use AES decryption purely as a
+-- one-way scrambling function, as legitimate a round function as AES
+-- encryption used the same way.
+def decryptAES256ECBNoPad (key : AES256Key) (data : ByteArray) : IO ByteArray := do
+  if key.bytes.size ≠ AES_256_KEY_SIZE then
+    throw (IO.userError "Invalid AES-256 key size")
+  if data.size % AES_256_BLOCK_SIZE ≠ 0 then
+    throw (IO.userError "AES-256-ECB (no padding): data size must be a multiple of the AES block size")
+  aes256ECBDecryptNoPad key.bytes data
+
 -- Symmetric Encryption - AES-256-CBC
 
 def encryptAES256CBC (key : AES256Key) (iv : AES256IV) (plaintext : ByteArray) : IO ByteArray := do
@@ -61,6 +75,17 @@ def decryptAES256CBC (key : AES256Key) (iv : AES256IV) (ciphertext : ByteArray) 
   if iv.bytes.size ≠ AES_256_BLOCK_SIZE then
     throw (IO.userError "Invalid AES-256 IV size")
   aes256CBCDecrypt key.bytes iv.bytes ciphertext
+
+-- AES-256-CBC decryption with PKCS#7 padding disabled. See
+-- `decryptAES256ECBNoPad`.
+def decryptAES256CBCNoPad (key : AES256Key) (iv : AES256IV) (data : ByteArray) : IO ByteArray := do
+  if key.bytes.size ≠ AES_256_KEY_SIZE then
+    throw (IO.userError "Invalid AES-256 key size")
+  if iv.bytes.size ≠ AES_256_BLOCK_SIZE then
+    throw (IO.userError "Invalid AES-256 IV size")
+  if data.size % AES_256_BLOCK_SIZE ≠ 0 then
+    throw (IO.userError "AES-256-CBC (no padding): data size must be a multiple of the AES block size")
+  aes256CBCDecryptNoPad key.bytes iv.bytes data
 
 -- Authenticated Encryption - AES-256-GCM
 

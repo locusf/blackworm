@@ -49,7 +49,14 @@ jobs:
           make -j"$(nproc)"
 
       # Builds every target in the project: the `Blackworm` library, the
-      # `Bench` benchmarking library, and the `bench` executable (which links
-      # against the OpenSSL FFI library built above).
+      # `Bench` benchmarking library, the `Test` correctness-test library,
+      # and the `bench`/`test` executables (both link against the OpenSSL
+      # FFI library built above).
       - name: Build the Lean project
-        run: lake build Blackworm Bench bench
+        run: lake build Blackworm Bench bench Test test
+
+      # Runs the correctness tests (chained encrypt/decrypt round trips,
+      # including the mixed cipher-set chain and the one-way AES decrypt
+      # round functions) and fails CI if any test case fails.
+      - name: Run correctness tests
+        run: lake exe test

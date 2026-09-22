@@ -131,6 +131,41 @@ def feistelWithAES256ECB (key : Crypto.AES256Key) (data : ByteArray) : IO ByteAr
 def feistelWithAES256CBC (key : Crypto.AES256Key) (iv : Crypto.AES256IV) (data : ByteArray) : IO ByteArray := do
   Crypto.encryptAES256CBC key iv data
 
+-- AES-256-ECB decryption with a fixed key.
+--
+-- Unlike the encrypt-side wrappers above, this is *not* safe to feed
+-- arbitrary/derived Feistel state (e.g. a raw `feistelRound` half-block):
+-- OpenSSL's PKCS#7 unpadding aborts the whole process (a fatal panic, not a
+-- catchable `IO` error) if the input isn't genuine padded AES-256-ECB
+-- ciphertext produced under the same key. Only call it on the output of
+-- `feistelWithAES256ECB` (or `Crypto.encryptAES256ECB`) with the same key --
+-- i.e. use it to undo one link of a chain, not as a generic round function.
+def feistelWithAES256ECBDecrypt (key : Crypto.AES256Key) (data : ByteArray) : IO ByteArray := do
+  Crypto.decryptAES256ECB key data
+
+-- AES-256-CBC decryption with a fixed key and IV. See the caveat on
+-- `feistelWithAES256ECBDecrypt`: `data` must be genuine ciphertext produced
+-- with the same key and IV, or the process aborts.
+def feistelWithAES256CBCDecrypt (key : Crypto.AES256Key) (iv : Crypto.AES256IV) (data : ByteArray) : IO ByteArray := do
+  Crypto.decryptAES256CBC key iv data
+
+-- AES-256-ECB decryption with padding disabled, as an ordinary one-way
+-- Feistel round function. Unlike `feistelWithAES256ECBDecrypt`, this *is*
+-- safe to feed arbitrary Feistel state directly: with PKCS#7 padding
+-- removal disabled, AES-256-ECB decryption is a total keyed permutation
+-- over exact multiples of the AES block size (every half-block in this
+-- codebase is 32 bytes, i.e. two AES blocks), so it never aborts. It isn't
+-- "real" decryption of anything here -- it's the inverse cipher used purely
+-- as a pseudorandom scrambling function, exactly as legitimate an `F` as
+-- `feistelWithAES256ECB` (encryption) or a hash.
+def feistelWithAES256ECBDecryptNoPad (key : Crypto.AES256Key) (data : ByteArray) : IO ByteArray := do
+  Crypto.decryptAES256ECBNoPad key data
+
+-- AES-256-CBC decryption with padding disabled. See
+-- `feistelWithAES256ECBDecryptNoPad`.
+def feistelWithAES256CBCDecryptNoPad (key : Crypto.AES256Key) (iv : Crypto.AES256IV) (data : ByteArray) : IO ByteArray := do
+  Crypto.decryptAES256CBCNoPad key iv data
+
 -- HKDF key derivation as a Feistel function
 def feistelWithHKDF (salt : ByteArray) (info : ByteArray) (length : Nat) (data : ByteArray) : IO ByteArray := do
   Crypto.hkdf salt data info length

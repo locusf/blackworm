@@ -1,0 +1,226 @@
+-- Correctness tests for the Blackworm dynamically generated Feistel cipher
+-- chain, focused on the mixed-cipher-set chain methodology used in
+-- `Bench/Suite.lean`: `feistelChainIO`/`feistelDechainIO` round trips
+-- through hashes, AES-256-ECB/CBC encryption, HKDF, and -- new in this
+-- session -- AES-256-ECB/CBC decryption used as an ordinary *one-way* round
+-- function via the padding-disabled `feistelWithAES256ECBDecryptNoPad`/
+-- `CBCDecryptNoPad` wrappers (see the caveats/comments in
+-- `Blackworm/Basic.lean`).
+--
+-- This is a plain correctness suite, not a benchmark: each `TestCase` is an
+-- `IO Bool` that returns whether the check passed. `main` runs every case,
+-- reports PASS/FAIL for each, and exits with a nonzero code if any failed
+-- (so `lake exe test` is CI-friendly).
+import Blackworm.Basic
+
+namespace Test
+
+structure TestCase where
+  name : String
+  run  : IO Bool
+
+/-- Deterministic, non-constant filler data, matching the convention in
+`Bench/Suite.lean`, so test inputs aren't a suspiciously degenerate
+all-zero block. -/
+def patternBytes (n : Nat) (seed : UInt8 := 0x5A) : ByteArray :=
+  ByteArray.mk (Array.range n |>.map fun i => seed ^^^ (UInt8.ofNat (i % 256)))
+
+/-- Assert two `ByteArray`s are equal, printing a short diagnostic (sizes
+and a hex prefix) on mismatch. -/
+def checkEq (label : String) (expected actual : ByteArray) : IO Bool := do
+  if expected == actual then
+    return true
+  else
+    IO.eprintln s!"  {label}: expected {Crypto.byteArrayToHex expected} (size {expected.size}), got {Crypto.byteArrayToHex actual} (size {actual.size})"
+    return false
+
+/-- Assert two `Block`s are equal (both halves), printing a short
+diagnostic on mismatch. -/
+def checkBlockEq (label : String) (expected actual : Block) : IO Bool := do
+  let leftOk ← checkEq s!"{label} (left)" expected.left actual.left
+  let rightOk ← checkEq s!"{label} (right)" expected.right actual.right
+  return leftOk && rightOk
+
+/-- Assert that `act` throws (any `IO` error), returning whether it did. -/
+def expectThrows {α : Type} (act : IO α) : IO Bool := do
+  try
+    discard act
+    return false
+  catch _ =>
+    return true
+
+/-- Build the default test suite. -/
+def defaultCases : IO (Array TestCase) := do
+  let aesKey : Crypto.AES256Key :=
+    { bytes := patternBytes AES_256_KEY_SIZE 0x11 }
+  let aesIV : Crypto.AES256IV :=
+    { bytes := patternBytes AES_256_BLOCK_SIZE 0x22 }
+  let hkdfSalt := patternBytes 16 0x33
+  let hkdfInfo := patternBytes 16 0x44
+  let payloadHalf := patternBytes HALF_BLOCK_SIZE
+  let block : Block := { left := payloadHalf, right := payloadHalf }
+
+  -- Several distinct test blocks (all-zero, all-0xFF, and two differently
+  -- patterned blocks) so the round-trip checks below aren't only exercised
+  -- on one degenerate input.
+  let testBlocks : List Block :=
+    [ { left := ByteArray.mk (Array.replicate HALF_BLOCK_SIZE 0),
+        right := ByteArray.mk (Array.replicate HALF_BLOCK_SIZE 0) },
+      { left := ByteArray.mk (Array.replicate HALF_BLOCK_SIZE 0xFF),
+        right := ByteArray.mk (Array.replicate HALF_BLOCK_SIZE 0xFF) },
+      { left := patternBytes HALF_BLOCK_SIZE 0x5A, right := patternBytes HALF_BLOCK_SIZE 0xA5 },
+      { left := patternBytes HALF_BLOCK_SIZE 0x01, right := patternBytes HALF_BLOCK_SIZE 0x7E } ]
+
+  -- The mixed cipher-set chain exercised by `Bench/Suite.lean`: every
+  -- forward wrapper from `Blackworm/Basic.lean`, including AES decrypt used
+  -- as an ordinary one-way link via the padding-disabled wrappers.
+  let chainSpecs : List (ByteArray → IO ByteArray) :=
+    [feistelWithHash256,
+     feistelWithAES256ECB aesKey,
+     feistelWithAES256ECBDecryptNoPad aesKey,
+     feistelWithAES256CBC aesKey aesIV,
+     feistelWithAES256CBCDecryptNoPad aesKey aesIV,
+     feistelWithHKDF hkdfSalt hkdfInfo HALF_BLOCK_SIZE,
+     feistelWithHash3_256]
+
+  -- Individual round functions to check `feistelRoundIO`/`feistelRoundInvIO`
+  -- round-trip correctness for, one at a time.
+  let roundFunctions : List (String × (ByteArray → IO ByteArray)) :=
+    [("SHA-256", feistelWithHash256),
+     ("SHA3-256", feistelWithHash3_256),
+     ("AES-256-ECB", feistelWithAES256ECB aesKey),
+     ("AES-256-CBC", feistelWithAES256CBC aesKey aesIV),
+     ("AES-256-ECB decrypt, no padding", feistelWithAES256ECBDecryptNoPad aesKey),
+     ("AES-256-CBC decrypt, no padding", feistelWithAES256CBCDecryptNoPad aesKey aesIV),
+     ("HKDF", feistelWithHKDF hkdfSalt hkdfInfo HALF_BLOCK_SIZE)]
+
+  return #[
+    -- One Feistel round, then its inverse, must recover the original block
+    -- -- for every round function used in the chain, including both
+    -- one-way AES decrypt wrappers. This holds regardless of whether `f`
+    -- is "really" invertible (SHA-256/SHA3-256/HKDF aren't), which is the
+    -- whole point of the Feistel construction: `feistelRoundInvIO` reapplies
+    -- the *same* forward `f`, it never needs an inverse of `f` itself.
+    { name := "feistelRoundIO/feistelRoundInvIO round trip per round function"
+      run := do
+        let mut allOk := true
+        for (label, f) in roundFunctions do
+          let ciphertext ← feistelRoundIO block f
+          let recovered ← feistelRoundInvIO ciphertext f
+          let ok ← checkBlockEq s!"round trip ({label})" block recovered
+          allOk := allOk && ok
+        return allOk },
+
+    -- The full 7-link mixed chain (as used in `Bench/Suite.lean`) must
+    -- round-trip via `feistelChainIO` (encrypt) then `feistelDechainIO`
+    -- (decrypt, the transpose/reverse order per
+    -- docs/cipher-visualization.md §4), across several distinct blocks.
+    { name := "feistelChainIO/feistelDechainIO round trip (7-link mixed chain)"
+      run := do
+        let mut allOk := true
+        let mut i := 0
+        for b in testBlocks do
+          let ciphertext ← feistelChainIO chainSpecs b
+          let recovered ← feistelDechainIO chainSpecs ciphertext
+          let ok ← checkBlockEq s!"chain round trip (block {i})" b recovered
+          allOk := allOk && ok
+          i := i + 1
+        return allOk },
+
+    -- The chain must actually transform the block (not be an accidental
+    -- identity/no-op), i.e. ciphertext ≠ plaintext for a non-trivial input.
+    { name := "feistelChainIO produces a genuinely different block"
+      run := do
+        let ciphertext ← feistelChainIO chainSpecs block
+        let leftChanged := ciphertext.left != block.left
+        let rightChanged := ciphertext.right != block.right
+        if leftChanged && rightChanged then
+          return true
+        else
+          IO.eprintln "  ciphertext was unexpectedly unchanged from the plaintext block"
+          return false },
+
+    -- Decryption in the *wrong* (non-reversed) order must NOT generally
+    -- recover the original block -- this guards against a regression where
+    -- `feistelDechainIO` (or a manual reimplementation) forgets to walk
+    -- `specs.reverse` (the transpose required per
+    -- docs/cipher-visualization.md §4). With cryptographic round functions
+    -- in the mix, the chance of an accidental match is negligible.
+    { name := "feistelDechainIO in forward (non-transposed) order does not recover the block"
+      run := do
+        let ciphertext ← feistelChainIO chainSpecs block
+        -- Deliberately reapply `feistelRoundInvIO` in the *forward* order
+        -- instead of `specs.reverse`, mimicking the bug this test guards
+        -- against.
+        let wrongOrder ← chainSpecs.foldlM (fun b f => feistelRoundInvIO b f) ciphertext
+        if wrongOrder.left != block.left || wrongOrder.right != block.right then
+          return true
+        else
+          IO.eprintln "  unexpectedly recovered the original block using the wrong (non-transposed) order"
+          return false },
+
+    -- Multi-block round trip: `feistelCipherIO` (forward) over several
+    -- blocks with a single round function, inverted block-by-block with
+    -- `feistelRoundInvIO`, must recover every original block.
+    { name := "feistelCipherIO round trip across multiple blocks (AES-256-ECB)"
+      run := do
+        let f := feistelWithAES256ECB aesKey
+        let ciphertexts ← feistelCipherIO testBlocks f
+        let recovered ← ciphertexts.mapM (fun b => feistelRoundInvIO b f)
+        let mut allOk := true
+        let mut i := 0
+        for (expected, actual) in testBlocks.zip recovered do
+          let ok ← checkBlockEq s!"multi-block round trip (block {i})" expected actual
+          allOk := allOk && ok
+          i := i + 1
+        return allOk },
+
+    -- The padding-disabled AES decrypt wrappers must succeed (not throw)
+    -- on arbitrary, non-ciphertext data whose size is a multiple of the AES
+    -- block size -- confirming they really are total functions, safe to use
+    -- as one-way round functions on arbitrary Feistel state.
+    { name := "AES-256-ECB/CBC decrypt (no padding) succeed on arbitrary block-sized data"
+      run := do
+        let arbitrary := patternBytes HALF_BLOCK_SIZE 0x99
+        let ecbOk ← (do discard (Crypto.decryptAES256ECBNoPad aesKey arbitrary); pure true)
+          <|> pure false
+        let cbcOk ← (do discard (Crypto.decryptAES256CBCNoPad aesKey aesIV arbitrary); pure true)
+          <|> pure false
+        if ecbOk && cbcOk then
+          return true
+        else
+          IO.eprintln s!"  decryptAES256ECBNoPad ok={ecbOk}, decryptAES256CBCNoPad ok={cbcOk}"
+          return false },
+
+    -- The padding-disabled AES decrypt wrappers must still reject
+    -- non-block-multiple input with a catchable `IO` error (not garbage
+    -- output), per the validation in `Crypto.decryptAES256ECBNoPad`/
+    -- `CBCNoPad`.
+    { name := "AES-256-ECB/CBC decrypt (no padding) reject non-block-multiple input"
+      run := do
+        let badSize := patternBytes (HALF_BLOCK_SIZE + 1) 0x99
+        let ecbRejected ← expectThrows (Crypto.decryptAES256ECBNoPad aesKey badSize)
+        let cbcRejected ← expectThrows (Crypto.decryptAES256CBCNoPad aesKey aesIV badSize)
+        if ecbRejected && cbcRejected then
+          return true
+        else
+          IO.eprintln s!"  decryptAES256ECBNoPad rejected={ecbRejected}, decryptAES256CBCNoPad rejected={cbcRejected}"
+          return false },
+
+    -- Sanity check on the "real" (padded) AES round trip still used for
+    -- genuine encrypt/decrypt (as opposed to the one-way chain links
+    -- above): `Crypto.decryptAES256ECB`/`CBC` must invert
+    -- `Crypto.encryptAES256ECB`/`CBC` for arbitrary-length data.
+    { name := "Crypto.encryptAES256ECB/CBC round trip (padded, arbitrary-length data)"
+      run := do
+        let msg := "The quick brown fox jumps over the lazy dog".toUTF8
+        let ecbCiphertext ← Crypto.encryptAES256ECB aesKey msg
+        let ecbRecovered ← Crypto.decryptAES256ECB aesKey ecbCiphertext
+        let ecbOk ← checkEq "AES-256-ECB round trip" msg ecbRecovered
+        let cbcCiphertext ← Crypto.encryptAES256CBC aesKey aesIV msg
+        let cbcRecovered ← Crypto.decryptAES256CBC aesKey aesIV cbcCiphertext
+        let cbcOk ← checkEq "AES-256-CBC round trip" msg cbcRecovered
+        return ecbOk && cbcOk }
+  ]
+
+end Test

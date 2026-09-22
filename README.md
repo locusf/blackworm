@@ -48,6 +48,28 @@ were actually called from compiled Lean code — this had apparently never
 been exercised end-to-end before. All twelve `openssl_*` functions have been
 fixed to wrap their return values with `lean_io_result_mk_ok`.
 
+## Testing
+
+`Test.lean` + `Test/Suite.lean` are a self-contained correctness suite for
+the chained encrypt/decrypt methodology: `feistelRoundIO`/`feistelRoundInvIO`
+round trips per round function, the full mixed cipher-set chain (the same
+one benchmarked in `Bench/Suite.lean`, including AES-256-ECB/CBC decryption
+used as a padding-disabled one-way round function) round-tripped via
+`feistelChainIO`/`feistelDechainIO`, multi-block `feistelCipherIO` round
+trips, a negative check that decrypting in the wrong (non-transposed) order
+does *not* recover the plaintext, and validation that the no-padding AES
+decrypt wrappers are total on block-sized input but still reject
+non-block-multiple input. Unlike `bench`, `lake exe test` exits with a
+nonzero status if any case fails, making it suitable as a CI gate.
+
+Build and run it with:
+
+```bash
+./build.sh                 # builds the OpenSSL C FFI shared library (once)
+lake build test             # generates Test/*.c and compiles the executable
+lake exe test                # run the suite; exits 0 iff every case passed
+```
+
 ## Visualization
 
 See [docs/cipher-visualization.md](docs/cipher-visualization.md) for Mermaid

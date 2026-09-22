@@ -17,6 +17,15 @@ opaque aes256ECBEncrypt (key : ByteArray) (plaintext : ByteArray) : IO ByteArray
 @[extern "openssl_aes_256_ecb_decrypt"]
 opaque aes256ECBDecrypt (key : ByteArray) (ciphertext : ByteArray) : IO ByteArray
 
+-- AES-256-ECB Decrypt, PKCS#7 padding disabled: a total, always-succeeding
+-- keyed permutation over exact multiples of the AES block size (16 bytes),
+-- unlike `aes256ECBDecrypt` (which validates and strips PKCS#7 padding, and
+-- can fail on non-ciphertext input). Suitable for using AES decryption as a
+-- one-way scrambling function (e.g. a Feistel round function) on data that
+-- was never actually encrypted.
+@[extern "openssl_aes_256_ecb_decrypt_nopad"]
+opaque aes256ECBDecryptNoPad (key : ByteArray) (data : ByteArray) : IO ByteArray
+
 -- AES-256-CBC Encrypt
 @[extern "openssl_aes_256_cbc_encrypt"]
 opaque aes256CBCEncrypt (key : ByteArray) (iv : ByteArray) (plaintext : ByteArray) : IO ByteArray
@@ -24,6 +33,10 @@ opaque aes256CBCEncrypt (key : ByteArray) (iv : ByteArray) (plaintext : ByteArra
 -- AES-256-CBC Decrypt
 @[extern "openssl_aes_256_cbc_decrypt"]
 opaque aes256CBCDecrypt (key : ByteArray) (iv : ByteArray) (ciphertext : ByteArray) : IO ByteArray
+
+-- AES-256-CBC Decrypt, PKCS#7 padding disabled. See `aes256ECBDecryptNoPad`.
+@[extern "openssl_aes_256_cbc_decrypt_nopad"]
+opaque aes256CBCDecryptNoPad (key : ByteArray) (iv : ByteArray) (data : ByteArray) : IO ByteArray
 
 -- AES-256-GCM Encrypt (returns (ciphertext, tag))
 @[extern "openssl_aes_256_gcm_encrypt"]

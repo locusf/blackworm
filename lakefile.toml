@@ -56,6 +56,25 @@ moreLinkArgs = [
   "-Wl,--allow-shlib-undefined", "-rdynamic"
 ]
 
+# Correctness tests: `Test.lean` + `Test/*.lean`, covering the chained
+# encrypt/decrypt methodology (mixed cipher-set chain, round-trip via
+# `feistelChainIO`/`feistelDechainIO`, and the one-way AES decrypt round
+# functions), built as a library and exposed as the `test` executable below.
+[[lean_lib]]
+name = "Test"
+
+# `lake exe test` — see Test.lean for usage. Requires the same
+# `libopenssl_crypto.so` prerequisite as `bench` above.
+[[lean_exe]]
+name = "test"
+root = "Test"
+moreLinkArgs = [
+  "build/libopenssl_crypto.so",
+  "-Wl,-rpath,$ORIGIN/../../../build",
+  "-lssl", "-lcrypto",
+  "-Wl,--allow-shlib-undefined", "-rdynamic"
+]
+
 # OpenSSL FFI bindings
 [[foreign_library]]
 name = "openssl_crypto"
