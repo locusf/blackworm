@@ -3,7 +3,9 @@
 ## Visualization
 
 See [docs/cipher-visualization.md](docs/cipher-visualization.md) for Mermaid
-diagrams of the generated block cipher: a single Feistel round, multiple
+diagrams of the generated block cipher: the 512-byte block split into two
+256-byte halves (each round-function pair encrypting one 256-byte half), a
+single Feistel round, multiple
 `(round function, round key)` pairs combined into one round via a cipher set,
 the chain linking blocks/rounds with distinct cipher sets, and the
 reverse-order (transpose) decryption of that chain.

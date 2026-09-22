@@ -3,6 +3,10 @@
 This document visualizes how the generated block cipher works **as currently
 implemented**, layer by layer:
 
+0. the **512-byte block layout**: each block is 512 bytes, split into two
+   256-byte halves, and every round-function pair encrypts exactly one
+   256-byte half per round (`BLOCK_SIZE`/`HALF_BLOCK_SIZE`/`fitTo`/
+   `Block.ofBytes512` in `Blackworm/Basic.lean`),
 1. a single Feistel round (`feistelRound`/`feistelRoundIO` in
    `Blackworm/Basic.lean`, `round` in `Blackworm/FeistelTheory.lean`),
 2. **multiple function pairs combined inside one round** — a *cipher set*
@@ -37,23 +41,46 @@ implemented**, layer by layer:
 > closure; the concrete `feistelChainIO` itself applies **one function per
 > round/block link**.
 
+## 0. The 512-byte block: two 256-byte halves
+
+A block is **512 bytes** (`BLOCK_SIZE`). `Block.ofBytes512` splits it into a
+256-byte left half and a 256-byte right half (`HALF_BLOCK_SIZE`);
+`Block.toBytes` reassembles it. Each round-function pair encrypts exactly one
+256-byte half per round: whatever the primitive's natural output size (a
+32-byte SHA-256 digest, a padded AES ciphertext, ...), `fitTo` cycles or
+truncates it to 256 bytes before it is XORed into the other half, so the
+halves never grow or shrink.
+
+```mermaid
+flowchart TB
+    B["512-byte block (BLOCK_SIZE)"]
+    B -->|"Block.ofBytes512"| L["L — 256 bytes\n(HALF_BLOCK_SIZE)"]
+    B -->|"Block.ofBytes512"| R["R — 256 bytes\n(HALF_BLOCK_SIZE)"]
+    R --> F["round-function pair F(k, ·)\n(natural output size varies)"]
+    F -->|"fitTo 256"| OUT["256-byte keystream\n— encrypts one 256-byte half"]
+    style B fill:#e3f2fd,stroke:#1565c0
+    style OUT fill:#e8f5e9,stroke:#2e7d32
+```
+
 ## 1. A single Feistel round
 
-`feistelRound b f = { left := b.right, right := b.left ⊕ f(b.right) }`
-(`⊕` is `xorByteArrays`; abstractly, any cancellative `xor`).
+`feistelRound b f = { left := b.right, right := b.left ⊕ fitTo 256 (f b.right) }`
+(`⊕` is `xorByteArrays`; abstractly, any cancellative `xor`). Both halves are
+256 bytes, so each round-function pair encrypts a 256-byte block of the state.
 
 ```mermaid
 flowchart LR
-    subgraph input["Block (input)"]
-        L["L"]
-        R["R"]
+    subgraph input["512-byte Block (input)"]
+        L["L (256 B)"]
+        R["R (256 B)"]
     end
-    subgraph output["Block (output)"]
-        L2["L' = R"]
-        R2["R' = L ⊕ F(k, R)"]
+    subgraph output["512-byte Block (output)"]
+        L2["L' = R (256 B)"]
+        R2["R' = L ⊕ fitTo 256 (F(k, R)) (256 B)"]
     end
     R --> F["F(k, ·)  — round function pair (F, k)"]
-    F --> X(("⊕"))
+    F --> FIT["fitTo 256"]
+    FIT --> X(("⊕"))
     L --> X
     X --> R2
     R --> L2
@@ -90,8 +117,9 @@ into the *same* round, not one primitive per round.
 
 ## 3. The chain: blocks/rounds linked together, each with its own cipher set
 
-`feistelChainIO specs b` folds a block through `specs` left-to-right, one
-(possibly different) function per link. Abstractly, `encryptChain` does the
+`feistelChainIO specs b` folds a 512-byte block through `specs` left-to-right,
+one (possibly different) function per link, each link's pair encrypting a
+256-byte half. Abstractly, `encryptChain` does the
 same over `List (RoundSpec α)`, where each `RoundSpec ⟨Fᵢ, kᵢ⟩` may itself be
 a whole cipher set packaged via `RoundSpec.ofCipherSet`.
 
@@ -146,6 +174,8 @@ decrypt:  c ─[F₃⁻¹]→ ─[F₂⁻¹]→ ─[F₁⁻¹]→ b  (specs.reve
 
 | Concept in the diagrams | Concrete (`Blackworm/Basic.lean`) | Abstract proof (`Blackworm/FeistelTheory.lean`) |
 | --- | --- | --- |
+| 512-byte block, 256-byte halves | `BLOCK_SIZE`, `HALF_BLOCK_SIZE`, `Block.ofBytes512`, `Block.toBytes`, `emptyHalf` | — (`Block α` is size-agnostic; `Concrete` instantiates `α := Bits n`) |
+| Fitting a pair's output to one 256-byte half | `fitTo` | — (abstract `F` already maps `α → α`) |
 | Block `(L, R)` | `Block` (`ByteArray` halves) | `Block α` |
 | One round | `feistelRound`, `feistelRoundIO` | `round`, `round_left_inv`, `round_right_inv` |
 | Round inverse | `feistelRoundInvIO` | `roundInv` |
