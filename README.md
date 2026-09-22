@@ -1,5 +1,13 @@
 # blackworm
 
+## Visualization
+
+See [docs/cipher-visualization.md](docs/cipher-visualization.md) for Mermaid
+diagrams of the generated block cipher: a single Feistel round, multiple
+`(round function, round key)` pairs combined into one round via a cipher set,
+the chain linking blocks/rounds with distinct cipher sets, and the
+reverse-order (transpose) decryption of that chain.
+
 ## Formal verification
 
 `Blackworm/FeistelTheory.lean` is a Lean 4 scaffold that formally verifies
