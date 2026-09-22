@@ -41,10 +41,18 @@ name = "Bench"
 [[lean_exe]]
 name = "bench"
 root = "Bench"
+# `$ORIGIN` is a linker rpath token (resolved relative to the executable's own
+# location at runtime, i.e. `.lake/build/bin/`), not a shell variable, so this
+# stays portable across machines/CI runners instead of hardcoding an absolute
+# path to one developer's checkout. Likewise, link against `-lssl -lcrypto`
+# (resolved via the linker's default search path, populated by installing
+# `libssl-dev`/equivalent) rather than a distro-specific absolute path such as
+# `/usr/lib64/libssl.so.3`, which doesn't exist on Debian/Ubuntu (used by
+# GitHub Actions' `ubuntu-latest` runners).
 moreLinkArgs = [
   "build/libopenssl_crypto.so",
-  "-Wl,-rpath,/home/user/blackworm/build",
-  "/usr/lib64/libssl.so.3", "/usr/lib64/libcrypto.so.3",
+  "-Wl,-rpath,$ORIGIN/../../../build",
+  "-lssl", "-lcrypto",
   "-Wl,--allow-shlib-undefined", "-rdynamic"
 ]
 
