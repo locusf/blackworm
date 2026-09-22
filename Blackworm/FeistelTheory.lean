@@ -28,7 +28,8 @@ instance of the abstract `Cancellative` operator studied below (and the
     blocks (no information loss from "dynamically" adding more rounds).
 * `Concrete` — a genuine instance of the abstract theory over `n`-bit
   half-blocks (`Bits n := Fin n → Bool`) with position-wise XOR, mirroring
-  `xorByteArrays`.
+  `xorByteArrays`, specialised to the implementation's 256-bit halves /
+  512-bit blocks (`HalfBlock`, `Block512`, `decryptRounds_encryptRounds_512`).
 * `KeyDerivation` — a model of round-key derivation from a master key and
   a PRF-like mixing function (as used by `feistelWithHKDF` in
   `Blackworm.Basic`), with theorems about the length and distinctness of
@@ -204,6 +205,28 @@ theorem bitsXor_cancellative (n : Nat) : Cancellative (α := Bits n) bitsXor := 
   funext i
   show Bool.xor (Bool.xor (a i) (b i)) (b i) = a i
   cases a i <;> cases b i <;> rfl
+
+/-- The half-block width used by the concrete implementation: 256 bits
+(`HALF_BLOCK_BITS` in `Blackworm.Basic`, carried there as a 32-byte
+`ByteArray`). -/
+def halfBlockBits : Nat := 256
+
+/-- A concrete 256-bit half-block, the formal counterpart of one 32-byte
+half of the `Block` structure in `Blackworm.Basic`. -/
+abbrev HalfBlock := Bits halfBlockBits
+
+/-- A concrete 512-bit block: two 256-bit halves, mirroring the
+`BLOCK_BITS = 2 * HALF_BLOCK_BITS` layout of `Blackworm.Basic`. -/
+abbrev Block512 := Block HalfBlock
+
+/-- **512-bit block correctness**: for any round function on 256-bit
+halves and any round-key schedule, decrypting a 512-bit block after
+encrypting it recovers the original — the abstract network theorems
+specialised to the exact block/half sizes the implementation uses. -/
+theorem decryptRounds_encryptRounds_512 (F : HalfBlock → HalfBlock → HalfBlock)
+    (keys : List HalfBlock) (b : Block512) :
+    decryptRounds bitsXor F keys (encryptRounds bitsXor F keys b) = b :=
+  decryptRounds_encryptRounds bitsXor (bitsXor_cancellative halfBlockBits) F keys b
 
 end Concrete
 

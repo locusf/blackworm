@@ -1,2 +1,0 @@
-/usr/bin/ar qc libopenssl_crypto_static.a CMakeFiles/openssl_crypto_static.dir/openssl_crypto.c.o
-/usr/bin/ranlib libopenssl_crypto_static.a

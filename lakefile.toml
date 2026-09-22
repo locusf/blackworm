@@ -32,9 +32,9 @@ name = "Bench"
 # `lake build`. The OpenSSL C FFI shared library is instead produced by the
 # separate CMake build (`./build.sh`, or
 # `cmake -S . -B build && cmake --build build`), which must be run at least
-# once (its output is also committed under `build/` for convenience) before
-# `lake build bench`/`lake exe bench` so `libopenssl_crypto.so` exists for
-# the linker below to find.
+# once before `lake build bench`/`lake exe bench` so `libopenssl_crypto.so`
+# exists for the linker below to find. The `build/` directory is a generated
+# artifact and is git-ignored, not committed.
 [[lean_exe]]
 name = "bench"
 root = "Bench"

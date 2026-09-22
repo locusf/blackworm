@@ -33,7 +33,7 @@ def runCase (warmup iters : Nat) (c : BenchCase) : IO Stats := do
   return computeStats durations
 
 /-- Build the default benchmark suite.
-`blockCount` controls how many 512-byte blocks the multi-block cipher
+`blockCount` controls how many 512-bit blocks the multi-block cipher
 cases process per invocation. -/
 def defaultCases (blockCount : Nat := 64) : IO (Array BenchCase) := do
   let payload512 := patternBytes BLOCK_SIZE
@@ -50,16 +50,16 @@ def defaultCases (blockCount : Nat := 64) : IO (Array BenchCase) := do
   return #[
     -- Raw OpenSSL primitives, no Feistel wrapping: a baseline for how much
     -- of the round's cost is the cryptographic primitive itself.
-    { name := "raw SHA-256 (512B)"
+    { name := "raw SHA-256 (512-bit)"
       bytesPerOp := BLOCK_SIZE
       op := discard (Crypto.hash256 payload512) },
-    { name := "raw SHA3-256 (512B)"
+    { name := "raw SHA3-256 (512-bit)"
       bytesPerOp := BLOCK_SIZE
       op := discard (Crypto.hash3_256 payload512) },
-    { name := "raw AES-256-ECB encrypt (512B)"
+    { name := "raw AES-256-ECB encrypt (512-bit)"
       bytesPerOp := BLOCK_SIZE
       op := discard (Crypto.encryptAES256ECB aesKey payload512) },
-    { name := "raw AES-256-CBC encrypt (512B)"
+    { name := "raw AES-256-CBC encrypt (512-bit)"
       bytesPerOp := BLOCK_SIZE
       op := discard (Crypto.encryptAES256CBC aesKey aesIV payload512) },
     { name := "raw HKDF-SHA256 derive (32B)"
@@ -68,24 +68,24 @@ def defaultCases (blockCount : Nat := 64) : IO (Array BenchCase) := do
 
     -- Pure Feistel-round mechanics (allocation/copy/XOR overhead), with an
     -- identity round function so the primitive's own cost is excluded.
-    { name := "feistelRound, identity F (512B)"
+    { name := "feistelRound, identity F (512-bit)"
       bytesPerOp := BLOCK_SIZE
       op := discard (pure (feistelRound block id) : IO Block) },
-    { name := "xorByteArrays (256B halves)"
+    { name := "xorByteArrays (256-bit halves)"
       bytesPerOp := HALF_BLOCK_SIZE
       op := discard (pure (xorByteArrays payloadHalf payloadHalf) : IO ByteArray) },
 
     -- One Feistel round per real round function.
-    { name := "feistelRoundIO + SHA-256 (512B)"
+    { name := "feistelRoundIO + SHA-256 (512-bit)"
       bytesPerOp := BLOCK_SIZE
       op := discard (feistelRoundIO block feistelWithHash256) },
-    { name := "feistelRoundIO + SHA3-256 (512B)"
+    { name := "feistelRoundIO + SHA3-256 (512-bit)"
       bytesPerOp := BLOCK_SIZE
       op := discard (feistelRoundIO block feistelWithHash3_256) },
-    { name := "feistelRoundIO + AES-256-ECB (512B)"
+    { name := "feistelRoundIO + AES-256-ECB (512-bit)"
       bytesPerOp := BLOCK_SIZE
       op := discard (feistelRoundIO block (feistelWithAES256ECB aesKey)) },
-    { name := "feistelRoundIO + AES-256-CBC (512B)"
+    { name := "feistelRoundIO + AES-256-CBC (512-bit)"
       bytesPerOp := BLOCK_SIZE
       op := discard (feistelRoundIO block (feistelWithAES256CBC aesKey aesIV)) },
 
@@ -101,7 +101,7 @@ def defaultCases (blockCount : Nat := 64) : IO (Array BenchCase) := do
     -- A dynamically generated cipher chain: one block through three
     -- different cipher sets, mirroring the chain construction described in
     -- docs/cipher-visualization.md.
-    { name := "feistelChainIO [SHA-256, AES-256-ECB, SHA3-256] (512B)"
+    { name := "feistelChainIO [SHA-256, AES-256-ECB, SHA3-256] (512-bit)"
       bytesPerOp := 3 * BLOCK_SIZE
       op := discard (feistelChainIO
         [feistelWithHash256, feistelWithAES256ECB aesKey, feistelWithHash3_256] block) }

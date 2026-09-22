@@ -30,7 +30,8 @@ min/mean/median/max/stddev latency, and throughput (MiB/s and ops/s).
 shared library produced by the CMake build (`build/libopenssl_crypto.so`)
 and the system's `libssl`/`libcrypto`; see the comment above it in
 `lakefile.toml` for why this bypasses the (non-functional) `[[foreign_library]]`
-TOML section.
+TOML section. The `build/` directory is generated and git-ignored, so the
+CMake step (`./build.sh`) must be run locally before `lake build bench`.
 
 ### Fixed: OpenSSL FFI results were never wrapped as `IO` results
 
@@ -50,8 +51,8 @@ fixed to wrap their return values with `lean_io_result_mk_ok`.
 ## Visualization
 
 See [docs/cipher-visualization.md](docs/cipher-visualization.md) for Mermaid
-diagrams of the generated block cipher: the 512-byte block split into two
-256-byte halves (each round-function pair encrypting one 256-byte half), a
+diagrams of the generated block cipher: the 512-bit block split into two
+256-bit halves (each round-function pair encrypting one 256-bit half), a
 single Feistel round, multiple
 `(round function, round key)` pairs combined into one round via a cipher set,
 the chain linking blocks/rounds with distinct cipher sets, and the
