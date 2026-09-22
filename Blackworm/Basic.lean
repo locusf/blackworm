@@ -4,7 +4,12 @@ import Blackworm.CryptoInterface
 set_option eval.type true
 --set_option trace.Meta.synthInstance true
 
-def dim := 256
+-- The cipher operates on 512-byte blocks. Each block is split into two
+-- 256-byte halves, and every round-function pair encrypts exactly one
+-- 256-byte half per round (its output is fitted to 256 bytes before the
+-- XOR, so the halves never grow or shrink).
+def HALF_BLOCK_SIZE : Nat := 256
+def BLOCK_SIZE : Nat := 2 * HALF_BLOCK_SIZE -- 512 bytes
 
 structure Block where
   left: ByteArray
@@ -23,14 +28,41 @@ def xorByteArrays (a b : ByteArray) : ByteArray :=
     (a.get! i) ^^^ (b.get! i))
   result
 
+-- Fit `data` to exactly `n` bytes by cycling (repeating) its bytes, or
+-- zero-filling if it is empty. This is how a round function whose natural
+-- output size differs from a half block (e.g. a 32-byte SHA-256 digest, or
+-- a padded AES ciphertext) is stretched/truncated to encrypt exactly one
+-- 256-byte half. It is deterministic, so encryption and decryption fit the
+-- same round-function output identically and the XOR still cancels.
+def fitTo (n : Nat) (data : ByteArray) : ByteArray :=
+  if data.size == 0 then ByteArray.mk (Array.replicate n 0)
+  else ByteArray.mk (Array.range n |>.map fun i => data.get! (i % data.size))
+
+-- A zero-filled 256-byte half block.
+def emptyHalf : ByteArray := ByteArray.mk (Array.replicate HALF_BLOCK_SIZE 0)
+
+-- Split a 512-byte buffer into a Block of two 256-byte halves.
+def Block.ofBytes512 (data : ByteArray) : IO Block := do
+  if data.size ≠ BLOCK_SIZE then
+    throw (IO.userError s!"Block.ofBytes512: expected {BLOCK_SIZE} bytes, got {data.size}")
+  return { left := data.extract 0 HALF_BLOCK_SIZE,
+           right := data.extract HALF_BLOCK_SIZE BLOCK_SIZE }
+
+-- Reassemble the 512-byte buffer from a block's two 256-byte halves.
+def Block.toBytes (b : Block) : ByteArray :=
+  b.left ++ b.right
+
+-- One Feistel round on a 512-byte block: the round-function pair `f`
+-- encrypts the 256-byte right half, its output is fitted to 256 bytes, and
+-- the result is XORed into the 256-byte left half. Halves keep their size.
 def feistelRound (b : Block) (f : ByteArray → ByteArray) : Block :=
   { left := b.right,
-    right := xorByteArrays b.left (f b.right) } -- XOR operation on byte arrays
+    right := xorByteArrays b.left (fitTo b.left.size (f b.right)) } -- XOR operation on byte arrays
 
 --#eval feistelRound { left := 0x1234, right := 0xABCD } (fun x => x + 1)
 
 def blockList (n : Nat) : List Block :=
-  List.range n |>.map (fun _ => { left := ByteArray.mk #[], right := ByteArray.mk #[] }) -- Placeholder blocks with empty byte arrays
+  List.range n |>.map (fun _ => { left := emptyHalf, right := emptyHalf }) -- Placeholder 512-byte blocks (two zeroed 256-byte halves)
 
 --#eval blockList 5
 
@@ -44,21 +76,23 @@ def feistelCipher (blocks : List Block) (f : ByteArray → ByteArray) : List Blo
 
 def feistelRoundIO (b : Block) (f : ByteArray → IO ByteArray) : IO Block := do
   let fResult ← f b.right
-  return { left := b.right, right := xorByteArrays b.left fResult }
+  return { left := b.right, right := xorByteArrays b.left (fitTo b.left.size fResult) }
 
 def feistelCipherIO (blocks : List Block) (f : ByteArray → IO ByteArray) : IO (List Block) := do
   let results ← blocks.mapM (fun b => feistelRoundIO b f)
   return results
 
--- Inverse of a single Feistel round: undoes `feistelRoundIO` for the same `f`.
+-- Inverse of a single Feistel round: undoes `feistelRoundIO` for the same
+-- `f`. The round-function output is fitted to 256 bytes exactly as during
+-- encryption, so the XOR cancels and the original 256-byte halves return.
 def feistelRoundInvIO (b : Block) (f : ByteArray → IO ByteArray) : IO Block := do
   let fResult ← f b.left
-  return { left := xorByteArrays b.right fResult, right := b.left }
+  return { left := xorByteArrays b.right (fitTo b.right.size fResult), right := b.left }
 
--- A dynamically generated cipher *chain*: run a block through a sequence of
--- rounds where each round may use a *different* function (its own cipher
--- set), rather than one shared function applied every round. `specs` is
--- applied left-to-right, one function per round/block.
+-- A dynamically generated cipher *chain*: run a 512-byte block through a
+-- sequence of rounds where each round may use a *different* function (its
+-- own cipher set), each pair encrypting one 256-byte half per round.
+-- `specs` is applied left-to-right, one function per round/block.
 def feistelChainIO (specs : List (ByteArray → IO ByteArray)) (b : Block) : IO Block :=
   specs.foldlM (fun b f => feistelRoundIO b f) b
 
@@ -104,7 +138,7 @@ def feistelWithHKDF (salt : ByteArray) (info : ByteArray) (length : Nat) (data :
 --
 -- def exampleChainWithMixedCipherSets : IO Block := do
 --   let key : Crypto.AES256Key := { bytes := ByteArray.mk #[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31] }
---   let block : Block := { left := ByteArray.mk #[], right := ByteArray.mk #[] }
+--   let block : Block := { left := emptyHalf, right := emptyHalf } -- 512-byte block
 --   -- Each entry is a different cipher set/round function -- a dynamically
 --   -- generated chain across multiple blocks/rounds.
 --   let specs : List (ByteArray → IO ByteArray) :=
