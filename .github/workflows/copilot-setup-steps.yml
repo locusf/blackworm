@@ -1,0 +1,44 @@
+name: "Copilot Setup Steps"
+
+# Automatically run the setup steps when they are changed to allow for easy validation, and
+# allow manual testing through the repository's "Actions" tab
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  # The job MUST be called `copilot-setup-steps` or it will not be picked up by Copilot.
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Install OpenSSL and native build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev cmake build-essential
+
+      # Installs elan/Lean matching `lean-toolchain`, fetches the Mathlib
+      # `.olean` cache (`lake exe cache get`) instead of building it from
+      # source, runs `lake build`, and caches the `.lake` directory.
+      - name: Set up Lean 4 toolchain and build the Lean project
+        uses: leanprover/lean-action@v1
+
+      # Build the openssl_crypto C FFI library used by Blackworm/OpenSSLBindings.lean
+      # (same steps as build.sh, without its interactive prerequisite checks).
+      - name: Build the OpenSSL FFI library
+        run: |
+          mkdir -p build
+          cd build
+          cmake -DOPENSSL_DIR=/usr ..
+          make -j"$(nproc)"

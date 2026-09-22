@@ -1,0 +1,108 @@
+# Copilot instructions for blackworm
+
+Blackworm is a Lean 4 project with two intertwined halves:
+
+1. A dynamically-generated Feistel-network block cipher generator
+   (`Blackworm/Basic.lean`), driven by real cryptographic primitives
+   (SHA-256, SHA3-256, AES-256, ChaCha20-Poly1305, HKDF, PBKDF2) exposed
+   through a C FFI to OpenSSL (`openssl_crypto.c`).
+2. A formal proof of that cipher's correctness (`Blackworm/FeistelTheory.lean`),
+   built over an *abstract* model — it is deliberately independent of
+   `ByteArray`/`IO`/FFI so it type-checks without native dependencies, and it
+   `import Mathlib`.
+
+## Build
+
+```bash
+lake build          # builds the Lean project (pulls Mathlib per lakefile.toml)
+./build.sh           # full pipeline: checks OpenSSL/cmake/make/lake, builds the
+                      # openssl_crypto C FFI library via CMake, then `lake build`
+```
+
+- `.github/workflows/copilot-setup-steps.yml` preinstalls `libssl-dev`/`cmake`,
+  sets up the Lean 4 toolchain, primes the Mathlib `.olean` cache, and builds
+  the OpenSSL FFI library for the Copilot cloud agent's environment — mirror
+  it if the toolchain/dependency setup changes.
+
+- `lakefile.toml` declares a `[[foreign_library]]` named `openssl_crypto` that
+  compiles `openssl_crypto.c` and links `ssl`/`crypto`. `CMakeLists.txt` is an
+  alternative/manual way to build the same C library (shared + static) if you
+  need to invoke CMake directly instead of going through Lake.
+- Lean toolchain version is pinned in `lean-toolchain`
+  (`leanprover/lean4:v4.28.0-rc1`); Mathlib is pinned to `v4.28.0-rc1` in
+  `lakefile.toml`'s `[[require]]` block — keep these in sync when upgrading.
+- There is no separate test suite/runner. `Blackworm/CryptoExamples.lean`
+  contains `example : IO Unit := do ...` blocks that exercise every crypto
+  primitive end-to-end (encrypt/decrypt round-trips, GCM/ChaCha20 tag
+  verification); `lake build` type-checks these, and `#eval` on the relevant
+  `example`/`def` is how you'd manually exercise them in the Lean server.
+  Proof obligations in `FeistelTheory.lean` are checked as part of the same
+  `lake build`.
+
+## Architecture
+
+- `Blackworm.lean` is the library root; it just imports `Blackworm.Basic` and
+  `Blackworm.FeistelTheory` (per `[[lean_lib]] name = "Blackworm"` in
+  `lakefile.toml`).
+- FFI/crypto stack, low-level to high-level:
+  - `openssl_crypto.c` — native C implementations calling OpenSSL's EVP API.
+  - `Blackworm/OpenSSLBindings.lean` — `@[extern "openssl_..."] opaque ...`
+    declarations that bind 1:1 to the C functions, plus raw size constants
+    (`AES_256_KEY_SIZE`, etc.). Adding a new primitive means adding it here
+    *and* in the C file with matching extern names.
+  - `Blackworm/CryptoInterface.lean` — the `Crypto` namespace: type-safe
+    wrapper structs (`AES256Key`, `AES256IV`, `SHA256Hash`, ...) and
+    validating wrapper functions (e.g. `encryptAES256ECB` throws
+    `IO.userError` if the key size is wrong before calling the opaque FFI
+    function). Prefer extending this layer, not the raw bindings, when
+    exposing new functionality to cipher code.
+  - `Blackworm/Basic.lean` — the actual Feistel cipher: `Block`, a single
+    `feistelRound`/`feistelRoundIO`, and generalizations:
+    - `feistelCipherIO` runs the *same* round function `f` over a list of
+      blocks.
+    - `feistelChainIO`/`feistelDechainIO` run a *different* function per
+      round from a `List (ByteArray → IO ByteArray)` ("cipher chain"/"cipher
+      set"). **Decryption must walk `specs.reverse`** — undoing chain step 1
+      last — this transpose relationship is the crux of the design and is
+      mirrored/proved in the theory file.
+    - `feistelWithHash256`, `feistelWithAES256ECB`, `feistelWithHKDF`, etc.
+      adapt `Crypto` functions into the `ByteArray → IO ByteArray` shape a
+      Feistel round expects.
+- `Blackworm/FeistelTheory.lean` (`namespace Blackworm.Feistel`) mirrors the
+  above structurally but abstractly, so read it section-by-section alongside
+  the corresponding concept in `Basic.lean`:
+  - `Abstract` — round/network over any cancellative XOR-like op `α → α → α`;
+    proves single-round and full-network invertibility/injectivity for *any*
+    round function `F`.
+  - `Concrete` — instantiates `Abstract` with `Bits n := Fin n → Bool` and
+    position-wise XOR, the model of `xorByteArrays`.
+  - `KeyDerivation` — models round-key schedules from a master key (what
+    `feistelWithHKDF` provides concretely) and proves schedule length and
+    distinctness.
+  - `FullCipher` — combines `Abstract` + `KeyDerivation` into the end-to-end
+    theorem `feistelDecrypt_feistelEncrypt`.
+  - `MultiRound` — a `CipherSet`/`combineCipherSet`: several
+    `(round function, round key)` pairs XOR-folded into a single round
+    (multiple primitives mixed into one round), rather than one primitive
+    per round.
+  - `Chain` — generalizes rounds to `RoundSpec`/`encryptChain`/`decryptChain`
+    over a heterogeneous `List (RoundSpec α)`, the abstract counterpart of
+    `feistelChainIO`/`feistelDechainIO`. `decryptChain_eq_foldl_reverse` is
+    the formal statement of the transpose/reverse requirement above.
+
+## Conventions
+
+- New FFI-backed crypto operations follow a strict three-layer pattern: add
+  the `@[extern ...] opaque` declaration in `OpenSSLBindings.lean`, add a
+  validating wrapper in the `Crypto` namespace in `CryptoInterface.lean`, then
+  (optionally) add a `feistelWith*` adapter in `Basic.lean` if it's meant to
+  be used as a Feistel round function.
+- Any new Feistel-network property should be proved first in the `Abstract`
+  section over a generic cancellative operator, then (if needed) specialized
+  in `Concrete`/`FullCipher`/`Chain` — don't prove `ByteArray`-specific
+  results directly against `Basic.lean`, since `FeistelTheory.lean` is kept
+  independent of `ByteArray`/`IO`/FFI on purpose.
+- Wrapper functions in `CryptoInterface.lean` validate input sizes
+  (`key.bytes.size ≠ AES_256_KEY_SIZE`, etc.) and `throw (IO.userError ...)`
+  before ever calling the opaque FFI function — replicate this pattern for
+  new wrappers rather than trusting caller input.
