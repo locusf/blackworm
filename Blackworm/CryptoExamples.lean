@@ -5,6 +5,10 @@ open Crypto
 
 namespace CryptoExamples
 
+-- Deterministic test filler: `n` bytes where byte `i` is `f i` reduced mod 256.
+def patternBytes (n : Nat) (f : Nat → Nat := id) : ByteArray :=
+  ByteArray.mk (Array.range n |>.map fun i => UInt8.ofNat (f i))
+
 -- Example: Hash a message with SHA-256
 example : IO Unit := do
   let message := "Hello, Lean Cryptography!".toUTF8
@@ -19,8 +23,7 @@ example : IO Unit := do
 
 -- Example: AES-256-ECB Encryption
 example : IO Unit := do
-  let key : AES256Key := { bytes := ByteArray.mk (List.range AES_256_KEY_SIZE
-    |>.map fun i => (i % 256 : UInt8)) }
+  let key : AES256Key := { bytes := patternBytes AES_256_KEY_SIZE (fun i => i % 256) }
   let plaintext := "This is a secret message".toUTF8
   let ciphertext ← encryptAES256ECB key plaintext
   IO.println s!"AES-256-ECB Ciphertext length: {ciphertext.size}"
@@ -29,10 +32,8 @@ example : IO Unit := do
 
 -- Example: AES-256-CBC Encryption
 example : IO Unit := do
-  let key : AES256Key := { bytes := ByteArray.mk (List.range AES_256_KEY_SIZE
-    |>.map fun i => (i % 256 : UInt8)) }
-  let iv : AES256IV := { bytes := ByteArray.mk (List.range AES_256_BLOCK_SIZE
-    |>.map fun i => (i * 7 % 256 : UInt8)) }
+  let key : AES256Key := { bytes := patternBytes AES_256_KEY_SIZE (fun i => i % 256) }
+  let iv : AES256IV := { bytes := patternBytes AES_256_BLOCK_SIZE (fun i => i * 7 % 256) }
   let plaintext := "Secret data protected with AES-256-CBC".toUTF8
   let ciphertext ← encryptAES256CBC key iv plaintext
   IO.println s!"AES-256-CBC Ciphertext length: {ciphertext.size}"
@@ -41,10 +42,8 @@ example : IO Unit := do
 
 -- Example: AES-256-GCM Authenticated Encryption
 example : IO Unit := do
-  let key : AES256Key := { bytes := ByteArray.mk (List.range AES_256_KEY_SIZE
-    |>.map fun i => (i % 256 : UInt8)) }
-  let iv : AES256GCMIV := { bytes := ByteArray.mk (List.range AES_256_GCM_IV_SIZE
-    |>.map fun i => (i * 3 % 256 : UInt8)) }
+  let key : AES256Key := { bytes := patternBytes AES_256_KEY_SIZE (fun i => i % 256) }
+  let iv : AES256GCMIV := { bytes := patternBytes AES_256_GCM_IV_SIZE (fun i => i * 3 % 256) }
   let plaintext := "Authenticated encryption message".toUTF8
   let aad := "Additional authenticated data".toUTF8
   let result ← encryptAES256GCM key iv plaintext aad
@@ -57,10 +56,8 @@ example : IO Unit := do
 
 -- Example: ChaCha20-Poly1305 Authenticated Encryption
 example : IO Unit := do
-  let key : AES256Key := { bytes := ByteArray.mk (List.range CHACHA20_POLY1305_KEY_SIZE
-    |>.map fun i => (i % 256 : UInt8)) }
-  let nonce : ChaCha20Poly1305Nonce := { bytes := ByteArray.mk (List.range CHACHA20_POLY1305_NONCE_SIZE
-    |>.map fun i => (i * 5 % 256 : UInt8)) }
+  let key : AES256Key := { bytes := patternBytes CHACHA20_POLY1305_KEY_SIZE (fun i => i % 256) }
+  let nonce : ChaCha20Poly1305Nonce := { bytes := patternBytes CHACHA20_POLY1305_NONCE_SIZE (fun i => i * 5 % 256) }
   let plaintext := "ChaCha20-Poly1305 encrypted message".toUTF8
   let aad := "Additional data".toUTF8
   let result ← encryptChaCha20Poly1305 key nonce plaintext aad
@@ -77,7 +74,7 @@ example : IO Unit := do
   let info := "key_derivation_context".toUTF8
   let derived ← hkdf salt ikm info 32  -- Derive 32 bytes (256 bits)
   IO.println s!"HKDF Derived Key length: {derived.size}"
-  IO.println s!"HKDF Derived Key (hex): {derived.toHex}"
+  IO.println s!"HKDF Derived Key (hex): {byteArrayToHex derived}"
 
 -- Example: PBKDF2 Key Derivation
 example : IO Unit := do
@@ -85,13 +82,12 @@ example : IO Unit := do
   let salt := "pbkdf2_salt_1234".toUTF8
   let derived ← pbkdf2 password salt 100000 32  -- 100k iterations, 32 bytes output
   IO.println s!"PBKDF2 Derived Key length: {derived.size}"
-  IO.println s!"PBKDF2 Derived Key (hex): {derived.toHex}"
+  IO.println s!"PBKDF2 Derived Key (hex): {byteArrayToHex derived}"
 
 -- Utility: Demonstrate key validation
 example : IO Unit := do
-  let validKey : AES256Key := { bytes := ByteArray.mk (List.range AES_256_KEY_SIZE
-    |>.map fun i => (i % 256 : UInt8)) }
-  let invalidKey : AES256Key := { bytes := #[0x01, 0x02, 0x03] }  -- Too short
+  let validKey : AES256Key := { bytes := patternBytes AES_256_KEY_SIZE (fun i => i % 256) }
+  let invalidKey : AES256Key := { bytes := ByteArray.mk #[0x01, 0x02, 0x03] }  -- Too short
   if validateKeySize validKey then
     IO.println "Valid key size"
   else

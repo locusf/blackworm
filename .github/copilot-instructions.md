@@ -29,7 +29,7 @@ lake build          # builds the Lean project (pulls Mathlib per lakefile.toml)
   alternative/manual way to build the same C library (shared + static) if you
   need to invoke CMake directly instead of going through Lake.
 - Lean toolchain version is pinned in `lean-toolchain`
-  (`leanprover/lean4:v4.28.0-rc1`); Mathlib is pinned to `v4.28.0-rc1` in
+  (`leanprover/lean4:v4.34.0`); Mathlib is pinned to `v4.34.0` in
   `lakefile.toml`'s `[[require]]` block — keep these in sync when upgrading.
 - There is no separate test suite/runner. `Blackworm/CryptoExamples.lean`
   contains `example : IO Unit := do ...` blocks that exercise every crypto

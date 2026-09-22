@@ -1,3 +1,8 @@
+/-
+Copyright (c) 2026 Aleksi Suomalainen. All rights reserved.
+Released under the GNU General Public License v3.0 as described in the file LICENSE.txt.
+Authors: Aleksi Suomalainen
+-/
 import Mathlib
 
 /-!
@@ -102,7 +107,7 @@ function (`feistelWithHash256`) or AES-256 in ECB mode
 Feistel networks useful: `F` can be arbitrarily complex. -/
 theorem round_left_inv (hcancel : Cancellative xor) (F : α → α → α) (k : α) (b : Block α) :
     roundInv xor F k (round xor F k b) = b := by
-  show
+  change
     ({ left := xor (xor b.left (F k b.right)) (F k b.right), right := b.right } : Block α) = b
   rw [hcancel]
 
@@ -110,7 +115,7 @@ theorem round_left_inv (hcancel : Cancellative xor) (F : α → α → α) (k : 
 the original block. -/
 theorem round_right_inv (hcancel : Cancellative xor) (F : α → α → α) (k : α) (b : Block α) :
     round xor F k (roundInv xor F k b) = b := by
-  show
+  change
     ({ left := b.left, right := xor (xor b.right (F k b.left)) (F k b.left) } : Block α) = b
   rw [hcancel]
 
@@ -139,7 +144,7 @@ theorem decryptRounds_encryptRounds (hcancel : Cancellative xor) (F : α → α 
   | nil => intro b; rfl
   | cons k ks ih =>
     intro b
-    show
+    change
       roundInv xor F k (decryptRounds xor F ks (encryptRounds xor F ks (round xor F k b))) = b
     rw [ih (round xor F k b)]
     exact round_left_inv xor hcancel F k b
@@ -154,7 +159,7 @@ theorem encryptRounds_decryptRounds (hcancel : Cancellative xor) (F : α → α 
   | nil => intro b; rfl
   | cons k ks ih =>
     intro b
-    show
+    change
       encryptRounds xor F ks (round xor F k (roundInv xor F k (decryptRounds xor F ks b))) = b
     rw [round_right_inv xor hcancel F k (decryptRounds xor F ks b)]
     exact ih b
@@ -176,7 +181,8 @@ theorem encryptRounds_injective (hcancel : Cancellative xor) (F : α → α → 
 genuine two-sided inverse of `encryptRounds`, i.e. `encryptRounds xor F
 keys` is a bijection on `Block α` with explicit inverse `decryptRounds xor
 F keys`. -/
-theorem encryptRounds_has_two_sided_inverse (hcancel : Cancellative xor) (F : α → α → α) (keys : List α) :
+theorem encryptRounds_has_two_sided_inverse (hcancel : Cancellative xor) (F : α → α → α)
+    (keys : List α) :
     (∀ b, decryptRounds xor F keys (encryptRounds xor F keys b) = b) ∧
       ∀ b, encryptRounds xor F keys (decryptRounds xor F keys b) = b :=
   ⟨decryptRounds_encryptRounds xor hcancel F keys, encryptRounds_decryptRounds xor hcancel F keys⟩
@@ -203,7 +209,7 @@ algebraic property the abstract theory above requires. Every theorem in
 theorem bitsXor_cancellative (n : Nat) : Cancellative (α := Bits n) bitsXor := by
   intro a b
   funext i
-  show Bool.xor (Bool.xor (a i) (b i)) (b i) = a i
+  change Bool.xor (Bool.xor (a i) (b i)) (b i) = a i
   cases a i <;> cases b i <;> rfl
 
 /-- The half-block width used by the concrete implementation: 256 bits
@@ -417,7 +423,7 @@ theorem decryptChain_encryptChain (hcancel : Cancellative xor) :
   | nil => intro b; rfl
   | cons spec rest ih =>
     intro b
-    show
+    change
       roundInv xor spec.F spec.k
         (decryptChain xor rest (encryptChain xor rest (round xor spec.F spec.k b))) = b
     rw [ih (round xor spec.F spec.k b)]
@@ -433,7 +439,7 @@ theorem encryptChain_decryptChain (hcancel : Cancellative xor) :
   | nil => intro b; rfl
   | cons spec rest ih =>
     intro b
-    show
+    change
       encryptChain xor rest
         (round xor spec.F spec.k (roundInv xor spec.F spec.k (decryptChain xor rest b))) = b
     rw [round_right_inv xor hcancel spec.F spec.k (decryptChain xor rest b)]
@@ -446,20 +452,23 @@ theorem encryptChain_injective (hcancel : Cancellative xor) (specs : List (Round
     ∀ b₁ b₂, encryptChain xor specs b₁ = encryptChain xor specs b₂ → b₁ = b₂ := by
   intro b₁ b₂ h
   have h2 := congrArg (decryptChain xor specs) h
-  rwa [decryptChain_encryptChain xor hcancel specs, decryptChain_encryptChain xor hcancel specs] at h2
+  rwa [decryptChain_encryptChain xor hcancel specs,
+    decryptChain_encryptChain xor hcancel specs] at h2
 
 /-- `encryptRounds`/`decryptRounds` (a single fixed round function `F`, one
 key per round) are the special case of `encryptChain`/`decryptChain` where
 every round shares the same `F`. This confirms the chain construction is a
 strict generalisation of the original scaffold, not a different one. -/
 theorem encryptRounds_eq_encryptChain (F : α → α → α) (keys : List α) (b : Block α) :
-    encryptRounds xor F keys b = encryptChain xor (keys.map (fun k => (⟨F, k⟩ : RoundSpec α))) b := by
+    encryptRounds xor F keys b =
+      encryptChain xor (keys.map (fun k => (⟨F, k⟩ : RoundSpec α))) b := by
   induction keys generalizing b with
   | nil => rfl
   | cons k ks ih => simp [encryptRounds, encryptChain, List.map_cons, ih]
 
 theorem decryptRounds_eq_decryptChain (F : α → α → α) (keys : List α) (b : Block α) :
-    decryptRounds xor F keys b = decryptChain xor (keys.map (fun k => (⟨F, k⟩ : RoundSpec α))) b := by
+    decryptRounds xor F keys b =
+      decryptChain xor (keys.map (fun k => (⟨F, k⟩ : RoundSpec α))) b := by
   induction keys generalizing b with
   | nil => rfl
   | cons k ks ih => simp [decryptRounds, decryptChain, List.map_cons, ih]
@@ -478,7 +487,7 @@ theorem decryptChain_eq_foldl_reverse (specs : List (RoundSpec α)) (b : Block �
   induction specs generalizing b with
   | nil => rfl
   | cons spec rest ih =>
-    show roundInv xor spec.F spec.k (decryptChain xor rest b) =
+    change roundInv xor spec.F spec.k (decryptChain xor rest b) =
       (spec :: rest).reverse.foldl (fun acc spec => roundInv xor spec.F spec.k acc) b
     rw [List.reverse_cons, List.foldl_append, List.foldl_cons, List.foldl_nil, ← ih b]
 

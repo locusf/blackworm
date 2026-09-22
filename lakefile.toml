@@ -7,12 +7,15 @@ defaultTargets = ["Blackworm"]
 pp.unicode.fun = true # pretty-prints `fun a ↦ b`
 relaxedAutoImplicit = false
 weak.linter.mathlibStandardSet = true
+# The Mathlib header linter demands Mathlib's exact Apache-2.0 copyright
+# wording; this project is GPLv3 (see LICENSE.txt), so it can never pass.
+weak.linter.style.header = false
 maxSynthPendingDepth = 3
 
 [[require]]
 name = "mathlib"
 scope = "leanprover-community"
-rev = "v4.28.0-rc1"
+rev = "v4.34.0"
 
 [[lean_lib]]
 name = "Blackworm"
