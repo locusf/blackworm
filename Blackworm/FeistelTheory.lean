@@ -45,6 +45,15 @@ instance of the abstract `Cancellative` operator studied below (and the
   the same correctness/injectivity results, plus the explicit **transpose**
   theorem `decryptChain_eq_foldl_reverse`: inverting such a chain requires
   processing the per-block cipher sets in *reverse* order.
+* `DynamicGeneration` — the reformulated top-level theorem: the per-round
+  `(cipher, key)` pairs are not fixed in advance but **dynamically generated
+  from agreed-upon key material** — a `pickF` function (modelling
+  pseudorandom selection of a *different cipher or hash function* from a
+  pool for each round) and a `prf` key-derivation function both consume the
+  shared master key material and the round index. `dynamicDecrypt_dynamicEncrypt`
+  proves that two parties agreeing only on the key material (and the
+  deterministic generation procedure) obtain mutually inverse
+  encrypt/decrypt transforms, for *any* selection and derivation functions.
 -/
 
 namespace Blackworm.Feistel
@@ -451,5 +460,106 @@ theorem decryptChain_eq_foldl_reverse (specs : List (RoundSpec α)) (b : Block �
     rw [List.reverse_cons, List.foldl_append, List.foldl_cons, List.foldl_nil, ← ih b]
 
 end Chain
+
+/-! ## Dynamically generated cipher pairs from agreed key material -/
+section DynamicGeneration
+
+variable {α : Type u} (xor : α → α → α)
+
+/-- Generate the per-round `(cipher, key)` pairs of a dynamic block cipher
+from agreed-upon key material. For each round index `i`:
+
+* `pickF material i` **selects the round function itself** — modelling a
+  pseudorandom draw of a *different cipher or hash function* (e.g. SHA-256,
+  AES-256-ECB, an HKDF-based mixer, or a whole `CipherSet` collapsed via
+  `cipherSetF`) from the primitive pool, keyed by the shared key material
+  bytes; and
+* `prf material i` derives that round's subkey from the same material
+  (exactly as in `deriveKeys`).
+
+Because both selections are deterministic functions of `(material, i)`, two
+parties that agree on the key material bytes generate *identical* pairings
+without ever transmitting the chosen ciphers. -/
+def deriveSpecs (pickF : α → Nat → (α → α → α)) (prf : α → Nat → α) (material : α) :
+    Nat → List (RoundSpec α)
+  | 0 => []
+  | r + 1 => ⟨pickF material r, prf material r⟩ :: deriveSpecs pickF prf material r
+
+/-- Spec generation is total and produces exactly one `(cipher, key)` pair
+per round. -/
+theorem deriveSpecs_length (pickF : α → Nat → (α → α → α)) (prf : α → Nat → α)
+    (material : α) (rounds : Nat) :
+    (deriveSpecs pickF prf material rounds).length = rounds := by
+  induction rounds with
+  | zero => rfl
+  | succ r ih => simp [deriveSpecs, ih]
+
+/-- The dynamically generated block cipher: generate `rounds` cipher pairs
+from the agreed key material via `pickF`/`prf`, then run the heterogeneous
+Feistel chain they describe. Unlike `feistelEncrypt`, where a single fixed
+`F` is keyed differently per round, here **the block cipher pairs themselves
+are generated from the key material for each round**. -/
+def dynamicEncrypt (pickF : α → Nat → (α → α → α)) (prf : α → Nat → α)
+    (material : α) (rounds : Nat) (b : Block α) : Block α :=
+  encryptChain xor (deriveSpecs pickF prf material rounds) b
+
+/-- Decryption counterpart of `dynamicEncrypt`: regenerate the *same* cipher
+pairs from the *same* agreed key material and undo the chain (in reverse
+order, per `decryptChain`/`decryptChain_eq_foldl_reverse`). -/
+def dynamicDecrypt (pickF : α → Nat → (α → α → α)) (prf : α → Nat → α)
+    (material : α) (rounds : Nat) (b : Block α) : Block α :=
+  decryptChain xor (deriveSpecs pickF prf material rounds) b
+
+/-- **Reformulated top-level correctness theorem**: for *any* function
+`pickF` selecting a (possibly different) cipher or hash function per round,
+*any* key-derivation function `prf`, any agreed key material and any round
+count, decrypting with the same key material recovers the original
+plaintext block. The two parties need only agree on the key material bytes
+(and the deterministic generation procedure); the randomly generated cipher
+pairing per round is reconstructed identically on both sides. -/
+theorem dynamicDecrypt_dynamicEncrypt (hcancel : Cancellative xor)
+    (pickF : α → Nat → (α → α → α)) (prf : α → Nat → α)
+    (material : α) (rounds : Nat) (b : Block α) :
+    dynamicDecrypt xor pickF prf material rounds
+        (dynamicEncrypt xor pickF prf material rounds b) = b :=
+  decryptChain_encryptChain xor hcancel (deriveSpecs pickF prf material rounds) b
+
+/-- The reverse direction: encrypting after decrypting with the same agreed
+key material also recovers the original block. -/
+theorem dynamicEncrypt_dynamicDecrypt (hcancel : Cancellative xor)
+    (pickF : α → Nat → (α → α → α)) (prf : α → Nat → α)
+    (material : α) (rounds : Nat) (b : Block α) :
+    dynamicEncrypt xor pickF prf material rounds
+        (dynamicDecrypt xor pickF prf material rounds b) = b :=
+  encryptChain_decryptChain xor hcancel (deriveSpecs pickF prf material rounds) b
+
+/-- Corollary: the dynamically generated cipher is injective — no matter
+which ciphers or hash functions the key material happens to select for each
+round, encryption never collides two distinct blocks. -/
+theorem dynamicEncrypt_injective (hcancel : Cancellative xor)
+    (pickF : α → Nat → (α → α → α)) (prf : α → Nat → α)
+    (material : α) (rounds : Nat) :
+    ∀ b₁ b₂,
+      dynamicEncrypt xor pickF prf material rounds b₁ =
+          dynamicEncrypt xor pickF prf material rounds b₂ →
+        b₁ = b₂ :=
+  encryptChain_injective xor hcancel (deriveSpecs pickF prf material rounds)
+
+/-- The previous fixed-`F` cipher (`feistelEncrypt`) is the degenerate
+special case of the dynamically generated cipher in which `pickF` ignores
+the key material and always selects the same round function. This confirms
+the reformulation strictly generalises the original theorem. -/
+theorem feistelEncrypt_eq_dynamicEncrypt (F : α → α → α) (prf : α → Nat → α)
+    (master : α) (rounds : Nat) (b : Block α) :
+    feistelEncrypt xor F prf master rounds b =
+      dynamicEncrypt xor (fun _ _ => F) prf master rounds b := by
+  unfold feistelEncrypt dynamicEncrypt
+  rw [encryptRounds_eq_encryptChain]
+  congr 1
+  induction rounds with
+  | zero => rfl
+  | succ r ih => simp [deriveKeys, deriveSpecs, List.map_cons, ih]
+
+end DynamicGeneration
 
 end Blackworm.Feistel
