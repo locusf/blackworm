@@ -24,11 +24,11 @@ implemented**, layer by layer:
 > **Accuracy note.** The two halves of the design differ slightly, and the
 > diagrams show this honestly:
 >
-> * In the *concrete* code (`Basic.lean`), each link of the chain is a single
->   `ByteArray → IO ByteArray` function (e.g. `feistelWithHash256`,
->   `feistelWithAES256ECB key`, `feistelWithHKDF salt info len`). The keys are
->   captured inside these closures, so a "function pair" `(F, k)` appears as
->   one partially-applied function.
+> * In the *concrete* code (`Basic.lean`), each link is a `CipherPair` of
+>   forward/inverse block functions. `CipherPair.ofFeistel` builds a pair
+>   from a `ByteArray → IO ByteArray` function (e.g. `feistelWithHash256`,
+>   `feistelWithAES256ECB key`, `feistelWithHKDF salt info len`). Keys are
+>   captured inside these half-block closures.
 > * In the *abstract* proof layer (`FeistelTheory.lean`), the pairs are
 >   explicit: a `CipherSet` is a `List ((α → α → α) × α)` of
 >   `(round function, round key)` pairs, several of which can be XOR-folded
@@ -38,8 +38,10 @@ implemented**, layer by layer:
 > So "multiple function pairs per round" is a proved capability of the
 > abstract model (`MultiRound` section) which the concrete chain can realize
 > by composing/mixing primitives inside one `ByteArray → IO ByteArray`
-> closure; the concrete `feistelChainIO` itself applies **one function per
-> round/block link**.
+> closure. The concrete chain stores a `List CipherPair`: each pair has
+> `forward` and `inverse` block transformations (`Block → IO Block`).
+> `CipherPair.ofFeistel f` wraps a half-block function in a Feistel round
+> and its inverse; this pair is distinct from the abstract `(F, k)` pair.
 
 ## 0. The 512-bit block: two 256-bit halves
 
@@ -119,8 +121,10 @@ into the *same* round, not one primitive per round.
 ## 3. The chain: blocks/rounds linked together, each with its own cipher set
 
 `feistelChainIO specs b` folds a 512-bit block through `specs` left-to-right,
-one (possibly different) function per link, each link's pair encrypting a
-256-bit half. Abstractly, `encryptChain` does the
+applying each `CipherPair.forward`. For Feistel links, construct the pairs
+with `CipherPair.ofFeistel`; each such link encrypts a 256-bit half.
+Custom pairs may instead supply any size-preserving, mutually inverse
+block transformations. Abstractly, `encryptChain` models the Feistel case
 same over `List (RoundSpec α)`, where each `RoundSpec ⟨Fᵢ, kᵢ⟩` may itself be
 a whole cipher set packaged via `RoundSpec.ofCipherSet`.
 
@@ -143,7 +147,7 @@ flowchart LR
     style C fill:#fce4ec,stroke:#ad1457
 ```
 
-Each link is a full Feistel round from §1; the links differ only in *which*
+Each link in this diagram is a full Feistel round from §1; the links differ only in *which*
 round function (or combined cipher set) they use — this is what makes the
 chain "dynamically generated" (`deriveChain` in the theory file even derives
 the whole spec list from a master key).
@@ -152,9 +156,12 @@ the whole spec list from a master key).
 
 The round applied **first** during encryption must be undone **last**.
 `feistelDechainIO` therefore walks `specs.reverse`, applying
-`feistelRoundInvIO` per link; `decryptChain_eq_foldl_reverse` proves this is
-exactly `decryptChain`, and `decryptChain_encryptChain` proves the round trip
-is the identity.
+each pair's `inverse`. For `CipherPair.ofFeistel` links this calls
+`feistelRoundInvIO`; `decryptChain_eq_foldl_reverse` proves the corresponding
+abstract Feistel construction is exactly `decryptChain`, and
+`decryptChain_encryptChain` proves its round trip is the identity. These
+Feistel proofs do not establish correctness of arbitrary custom IO pairs;
+their inverse relationship is the caller's responsibility.
 
 ```mermaid
 flowchart RL

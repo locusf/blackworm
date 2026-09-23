@@ -1,6 +1,10 @@
 # Visualization: correctness tests
 
-These diagrams describe the eight cases executed by `lake exe test`, in
+The suite executes eleven cases via `lake exe test`. Three cipher-pair
+checks run first: empty-chain identity in both directions, custom block
+transformations with distinct inverses (including exact invocation order
+and both round-trip directions), and propagation of forward/inverse errors.
+The diagrams below describe the remaining eight Feistel/crypto cases in
 the order returned by [`defaultCases`](../Test/Suite.lean). They are a
 coverage map, not live results. The [`runner`](../Test.lean) prints the
 actual PASS/FAIL status.
@@ -9,7 +13,7 @@ actual PASS/FAIL status.
 
 ```mermaid
 flowchart TD
-    START["lake exe test"] --> BUILD["Build the default suite: 8 cases"]
+    START["lake exe test"] --> BUILD["Build the default suite: 11 cases"]
     BUILD --> NEXT["Run next case"]
     NEXT --> RESULT{"Returns true?"}
     NEXT --> EXCEPTION["Unexpected IO exception"]

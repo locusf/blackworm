@@ -74,14 +74,14 @@ def defaultCases : IO (Array TestCase) := do
   -- The mixed cipher-set chain exercised by `Bench/Suite.lean`: every
   -- forward wrapper from `Blackworm/Basic.lean`, including AES decrypt used
   -- as an ordinary one-way link via the padding-disabled wrappers.
-  let chainSpecs : List (ByteArray → IO ByteArray) :=
+  let chainSpecs : List CipherPair :=
     [feistelWithHash256,
      feistelWithAES256ECB aesKey,
      feistelWithAES256ECBDecryptNoPad aesKey,
      feistelWithAES256CBC aesKey aesIV,
      feistelWithAES256CBCDecryptNoPad aesKey aesIV,
      feistelWithHKDF hkdfSalt hkdfInfo HALF_BLOCK_SIZE,
-     feistelWithHash3_256]
+     feistelWithHash3_256].map CipherPair.ofFeistel
 
   -- Individual round functions to check `feistelRoundIO`/`feistelRoundInvIO`
   -- round-trip correctness for, one at a time.
@@ -95,6 +95,57 @@ def defaultCases : IO (Array TestCase) := do
      ("HKDF", feistelWithHKDF hkdfSalt hkdfInfo HALF_BLOCK_SIZE)]
 
   return #[
+    { name := "empty cipher-pair chain is identity in both directions"
+      run := do
+        let encrypted ← feistelChainIO [] block
+        let decrypted ← feistelDechainIO [] block
+        let forwardOk ← checkBlockEq "empty forward" block encrypted
+        let inverseOk ← checkBlockEq "empty inverse" block decrypted
+        return forwardOk && inverseOk },
+
+    { name := "custom block pairs use distinct inverses in reverse order"
+      run := do
+        let calls ← IO.mkRef ([] : List String)
+        let shift : CipherPair :=
+          { forward := fun b => do
+              calls.modify (· ++ ["shift forward"])
+              return { b with left := ByteArray.mk (b.left.data.map (· + 1)) }
+            inverse := fun b => do
+              calls.modify (· ++ ["shift inverse"])
+              return { b with left := ByteArray.mk (b.left.data.map (· - 1)) } }
+        let exchange : CipherPair :=
+          { forward := fun b => do
+              calls.modify (· ++ ["swap forward"])
+              return swap b
+            inverse := fun b => do
+              calls.modify (· ++ ["swap inverse"])
+              return swap b }
+        let specs := [shift, exchange]
+        let ciphertext ← feistelChainIO specs block
+        let expected := swap { block with left := ByteArray.mk (block.left.data.map (· + 1)) }
+        let forwardOk ← checkBlockEq "custom forward" expected ciphertext
+        let recovered ← feistelDechainIO specs ciphertext
+        let inverseOk ← checkBlockEq "custom inverse" block recovered
+        let actualCalls ← calls.get
+        let orderOk := actualCalls == ["shift forward", "swap forward", "swap inverse", "shift inverse"]
+        if !orderOk then
+          IO.eprintln s!"  unexpected pair invocation order: {actualCalls}"
+        let reverseCiphertext ← feistelDechainIO specs block
+        let reverseRecovered ← feistelChainIO specs reverseCiphertext
+        let reverseOk ← checkBlockEq "custom encrypt after decrypt" block reverseRecovered
+        return forwardOk && inverseOk && orderOk && reverseOk },
+
+    { name := "cipher-pair chain propagates forward and inverse errors"
+      run := do
+        let failing : CipherPair :=
+          { forward := fun _ => throw (IO.userError "forward failure")
+            inverse := fun _ => throw (IO.userError "inverse failure") }
+        let forwardOk ← expectThrows (feistelChainIO [failing] block)
+        let inverseOk ← expectThrows (feistelDechainIO [failing] block)
+        if !forwardOk || !inverseOk then
+          IO.eprintln "  cipher-pair chain did not propagate an error"
+        return forwardOk && inverseOk },
+
     -- One Feistel round, then its inverse, must recover the original block
     -- -- for every round function used in the chain, including both
     -- one-way AES decrypt wrappers. This holds regardless of whether `f`
@@ -152,7 +203,7 @@ def defaultCases : IO (Array TestCase) := do
         -- Deliberately reapply `feistelRoundInvIO` in the *forward* order
         -- instead of `specs.reverse`, mimicking the bug this test guards
         -- against.
-        let wrongOrder ← chainSpecs.foldlM (fun b f => feistelRoundInvIO b f) ciphertext
+        let wrongOrder ← chainSpecs.foldlM (fun b spec => spec.inverse b) ciphertext
         if wrongOrder.left != block.left || wrongOrder.right != block.right then
           return true
         else

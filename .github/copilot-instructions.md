@@ -60,9 +60,12 @@ lake build          # builds the Lean project (pulls Mathlib per lakefile.toml)
     `feistelRound`/`feistelRoundIO`, and generalizations:
     - `feistelCipherIO` runs the *same* round function `f` over a list of
       blocks.
-    - `feistelChainIO`/`feistelDechainIO` run a *different* function per
-      round from a `List (ByteArray → IO ByteArray)` ("cipher chain"/"cipher
-      set"). **Decryption must walk `specs.reverse`** — undoing chain step 1
+    - `feistelChainIO`/`feistelDechainIO` consume a `List CipherPair`, each
+      holding `forward` and `inverse` functions of type `Block → IO Block`.
+      `CipherPair.ofFeistel` adapts an existing half-block round function,
+      reusing it in both Feistel directions. Custom pairs must be mutually
+      inverse and preserve block sizes. **Decryption must walk
+      `specs.reverse`** and call `inverse` — undoing chain step 1
       last — this transpose relationship is the crux of the design and is
       mirrored/proved in the theory file.
     - `feistelWithHash256`, `feistelWithAES256ECB`, `feistelWithHKDF`, etc.

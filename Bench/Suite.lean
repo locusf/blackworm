@@ -83,14 +83,14 @@ def defaultCases (blockCount : Nat := 64) : IO (Array BenchCase) := do
   -- decrypt links -- by reapplying the same forward functions in reverse,
   -- which is how a Feistel network decrypts without needing an inverse
   -- round function.
-  let chainSpecs : List (ByteArray → IO ByteArray) :=
+  let chainSpecs : List CipherPair :=
     [feistelWithHash256,
      feistelWithAES256ECB aesKey,
      feistelWithAES256ECBDecryptNoPad aesKey,
      feistelWithAES256CBC aesKey aesIV,
      feistelWithAES256CBCDecryptNoPad aesKey aesIV,
      feistelWithHKDF hkdfSalt hkdfInfo HALF_BLOCK_SIZE,
-     feistelWithHash3_256]
+     feistelWithHash3_256].map CipherPair.ofFeistel
   let chainCiphertext ← feistelChainIO chainSpecs block
 
   return #[

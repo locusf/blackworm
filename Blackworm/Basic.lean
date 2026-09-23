@@ -97,19 +97,27 @@ def feistelRoundInvIO (b : Block) (f : ByteArray → IO ByteArray) : IO Block :=
   let fResult ← f b.left
   return { left := xorByteArrays b.right (fitTo b.right.size fResult), right := b.left }
 
--- A dynamically generated cipher *chain*: run a 512-bit block through a
--- sequence of rounds where each round may use a *different* function (its
--- own cipher set), each pair encrypting one 256-bit half per round.
--- `specs` is applied left-to-right, one function per round/block.
-def feistelChainIO (specs : List (ByteArray → IO ByteArray)) (b : Block) : IO Block :=
-  specs.foldlM (fun b f => feistelRoundIO b f) b
+/-- A chain link's forward and inverse block transformations. Custom links
+must preserve block sizes and supply mutually inverse transformations. -/
+structure CipherPair where
+  forward : Block → IO Block
+  inverse : Block → IO Block
+
+/-- Lift a deterministic half-block function into a reversible Feistel link.
+Both directions reuse `f`; no inverse of the primitive itself is needed. -/
+def CipherPair.ofFeistel (f : ByteArray → IO ByteArray) : CipherPair :=
+  { forward := fun b => feistelRoundIO b f,
+    inverse := fun b => feistelRoundInvIO b f }
+
+-- Apply each link's forward block transformation from left to right.
+def feistelChainIO (specs : List CipherPair) (b : Block) : IO Block :=
+  specs.foldlM (fun b spec => spec.forward b) b
 
 -- Invert `feistelChainIO`: the round applied *first* during encryption must
 -- be undone *last* during decryption, so decryption walks the **transpose**
--- (reverse) of the function-set list used to encrypt, undoing each round in
--- turn with `feistelRoundInvIO`.
-def feistelDechainIO (specs : List (ByteArray → IO ByteArray)) (b : Block) : IO Block :=
-  specs.reverse.foldlM (fun b f => feistelRoundInvIO b f) b
+-- (reverse) of the pair list, using each link's inverse transformation.
+def feistelDechainIO (specs : List CipherPair) (b : Block) : IO Block :=
+  specs.reverse.foldlM (fun b spec => spec.inverse b) b
 
 -- Wrapper functions for specific crypto operations
 
@@ -184,9 +192,9 @@ def feistelWithHKDF (salt : ByteArray) (info : ByteArray) (length : Nat) (data :
 --   let block : Block := { left := emptyHalf, right := emptyHalf } -- 512-bit block
 --   -- Each entry is a different cipher set/round function -- a dynamically
 --   -- generated chain across multiple blocks/rounds.
---   let specs : List (ByteArray → IO ByteArray) :=
---     [feistelWithHash256, feistelWithAES256ECB key, feistelWithHash3_256]
+--   let specs : List CipherPair :=
+--     [feistelWithHash256, feistelWithAES256ECB key, feistelWithHash3_256].map
+--       CipherPair.ofFeistel
 --   let ciphertext ← feistelChainIO specs block
 --   -- Decryption requires the *transpose* (reverse) of `specs`.
 --   feistelDechainIO specs ciphertext
-
