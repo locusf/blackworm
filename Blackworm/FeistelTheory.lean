@@ -8,18 +8,18 @@ import Mathlib
 /-!
 # Formal Feistel Network Theory
 
-This module is a self-contained Lean 4 scaffold that formally verifies the
-core mathematical properties of the dynamic Feistel-network block cipher
-generator implemented in `Blackworm.Basic` (`round`/`feistelRound`,
-`feistelCipher`, `feistelWithHash256`, `feistelWithAES256ECB`, ... ), and
-adds a verified model of round-key derivation ("key schedule"), which the
-original implementation was missing.
+This module proves the core mathematical properties of an abstract model
+of the dynamic Feistel network implemented in `Blackworm.Basic`, together
+with a model of round-key derivation. Its `round`/`roundInv` pairs model
+`CipherPair.ofFeistel`, not arbitrary custom `CipherPair` IO functions.
+It does not verify the concrete ByteArray implementation, native FFI,
+message padding, or cryptographic security.
 
 It is intentionally independent of `ByteArray`, `IO`, and the OpenSSL FFI
 layer so that it can be type-checked with no native dependencies: the
-`ByteArray` XOR used by `xorByteArrays` in `Blackworm.Basic` is a concrete
-instance of the abstract `Cancellative` operator studied below (and the
-`Bits n` model in the `Concrete` section instantiates it explicitly).
+`Bits n` model in the `Concrete` section instantiates cancellative XOR at a
+fixed width, modeling the intended equal-length ByteArray halves. No
+refinement theorem connecting ByteArray operations to that model is proved.
 
 ## Contents
 
@@ -38,7 +38,8 @@ instance of the abstract `Cancellative` operator studied below (and the
 * `KeyDerivation` — a model of round-key derivation from a master key and
   a PRF-like mixing function (as used by `feistelWithHKDF` in
   `Blackworm.Basic`), with theorems about the length and distinctness of
-  the generated schedule.
+  the generated schedule. Distinctness assumes idealized PRF injectivity;
+  it is not a guarantee that real HKDF outputs never collide.
 * `FullCipher` — glues key derivation and the Feistel network together and
   proves the end-to-end correctness theorem `feistelDecrypt_feistelEncrypt`.
 * `MultiRound` — a `CipherSet`: multiple `(round function, round key)` pairs

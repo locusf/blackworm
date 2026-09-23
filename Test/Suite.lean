@@ -218,6 +218,9 @@ def defaultCases : IO (Array TestCase) := do
         let f := feistelWithAES256ECB aesKey
         let ciphertexts ← feistelCipherIO testBlocks f
         let recovered ← ciphertexts.mapM (fun b => feistelRoundInvIO b f)
+        if ciphertexts.length ≠ testBlocks.length || recovered.length ≠ testBlocks.length then
+          IO.eprintln "  multi-block cipher changed the number of blocks"
+          return false
         let mut allOk := true
         let mut i := 0
         for (expected, actual) in testBlocks.zip recovered do
@@ -271,7 +274,133 @@ def defaultCases : IO (Array TestCase) := do
         let cbcCiphertext ← Crypto.encryptAES256CBC aesKey aesIV msg
         let cbcRecovered ← Crypto.decryptAES256CBC aesKey aesIV cbcCiphertext
         let cbcOk ← checkEq "AES-256-CBC round trip" msg cbcRecovered
-        return ecbOk && cbcOk }
+        return ecbOk && cbcOk },
+
+    { name := "generated mixed chains round trip in both directions"
+      run := do
+        let mut allOk := true
+        for seed in [0:16] do
+          let bytes := ByteArray.mk (Array.range BLOCK_SIZE |>.map fun i =>
+            UInt8.ofNat ((seed + 1) * (i * i + 17 * i + 31) + i / 3))
+          let input ← Block.ofBits512 bytes
+          let offset := seed % chainSpecs.length
+          let rotated := chainSpecs.drop offset ++ chainSpecs.take offset
+          for count in [0:15] do
+            let specs := (rotated ++ rotated).take count
+            let encrypted ← feistelChainIO specs input
+            let recovered ← feistelDechainIO specs encrypted
+            let forwardOk ← checkBlockEq s!"generated seed={seed} links={count}" input recovered
+            let decrypted ← feistelDechainIO specs input
+            let recoveredReverse ← feistelChainIO specs decrypted
+            let inverseOk ← checkBlockEq s!"generated reverse seed={seed} links={count}" input recoveredReverse
+            allOk := allOk && forwardOk && inverseOk
+        return allOk },
+
+    { name := "chain rejects invalid input and size-changing custom pairs"
+      run := do
+        let mut allOk := true
+        for size in [0, 1, 31, 33, 64] do
+          for invalid in
+              [{ left := patternBytes size, right := emptyHalf : Block },
+               { left := emptyHalf, right := patternBytes size : Block }] do
+            let forwardOk ← expectThrows (feistelChainIO [] invalid)
+            let inverseOk ← expectThrows (feistelDechainIO [] invalid)
+            allOk := allOk && forwardOk && inverseOk
+        let invalidPair : CipherPair :=
+          { forward := fun b => pure { b with left := ByteArray.empty }
+            inverse := fun b => pure { b with right := ByteArray.empty } }
+        let calls ← IO.mkRef (0 : Nat)
+        let sentinel : CipherPair :=
+          { forward := fun b => do calls.modify (· + 1); return b
+            inverse := fun b => do calls.modify (· + 1); return b }
+        let forwardOk ← expectThrows (feistelChainIO [invalidPair, sentinel] block)
+        let inverseOk ← expectThrows (feistelDechainIO [sentinel, invalidPair] block)
+        let count ← calls.get
+        allOk := allOk && forwardOk && inverseOk && count == 0
+        if !allOk then
+          IO.eprintln "  invalid block was accepted or processing continued after invalid output"
+        return allOk },
+
+    { name := "variable-length messages round trip with exact padded lengths"
+      run := do
+        let mut allOk := true
+        for size in [0:194] do
+          let message := patternBytes size (UInt8.ofNat size)
+          for specs in [[], chainSpecs] do
+            let ciphertext ← encryptMessageIO specs message
+            let expectedSize := (size / BLOCK_SIZE + 1) * BLOCK_SIZE
+            if ciphertext.size ≠ expectedSize then
+              IO.eprintln s!"  message length {size}: expected ciphertext size {expectedSize}, got {ciphertext.size}"
+              allOk := false
+            let recovered ← decryptMessageIO specs ciphertext
+            let ok ← checkEq s!"message length {size}" message recovered
+            allOk := allOk && ok
+        let paddedEmpty ← encryptMessageIO [] ByteArray.empty
+        let paddingOk ← checkEq "full padding block"
+          (ByteArray.mk (Array.replicate BLOCK_SIZE (UInt8.ofNat BLOCK_SIZE))) paddedEmpty
+        return allOk && paddingOk },
+
+    { name := "message decryption rejects invalid lengths and padding"
+      run := do
+        let mut allOk := true
+        for size in [0, 1, 63, 65, 127] do
+          let rejected ← expectThrows (decryptMessageIO [] (patternBytes size))
+          allOk := allOk && rejected
+        for last in [0, 65, 255] do
+          let malformed := patternBytes (BLOCK_SIZE - 1) ++ ByteArray.mk #[UInt8.ofNat last]
+          let rejected ← expectThrows (decryptMessageIO [] malformed)
+          allOk := allOk && rejected
+        let inconsistent := patternBytes (BLOCK_SIZE - 2) ++ ByteArray.mk #[1, 2]
+        let rejected ← expectThrows (decryptMessageIO [] inconsistent)
+        allOk := allOk && rejected
+        if !allOk then
+          IO.eprintln "  invalid message length or padding was accepted"
+        return allOk },
+
+    { name := "native OpenSSL failures are catchable IO errors"
+      run := do
+        -- Empty padded ciphertext always fails finalization; no probabilistic
+        -- assumption about the padding of random ciphertext is needed.
+        let ecbOk ← expectThrows (Crypto.decryptAES256ECB aesKey ByteArray.empty)
+        let cbcOk ← expectThrows (Crypto.decryptAES256CBC aesKey aesIV ByteArray.empty)
+        let noPadOk ← expectThrows (aes256ECBDecryptNoPad aesKey.bytes (patternBytes 17))
+        let pbkdfOk ← expectThrows (pbkdf2Sha256 "password".toUTF8 hkdfSalt 0 32)
+        if !ecbOk || !cbcOk || !noPadOk || !pbkdfOk then
+          IO.eprintln "  expected a catchable native failure"
+          return false
+        let hash ← Crypto.hash256 ByteArray.empty
+        if Crypto.sha256ToString hash ≠ "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" then
+          IO.eprintln "  SHA-256 failed after handling native errors"
+          return false
+        return true },
+
+    { name := "AEAD round trips and authentication failures retain Option semantics"
+      run := do
+        let nonce := patternBytes 12 0x42
+        let aad := "associated data".toUTF8
+        let message := "authenticated message".toUTF8
+        let mut allOk := true
+        for (encrypt, decrypt) in
+            [(aes256GCMEncrypt, aes256GCMDecrypt),
+             (chacha20Poly1305Encrypt, chacha20Poly1305Decrypt)] do
+          let (ciphertext, tag) ← encrypt aesKey.bytes nonce message aad
+          match ← decrypt aesKey.bytes nonce ciphertext tag aad with
+          | none =>
+            IO.eprintln "  valid AEAD ciphertext was rejected"
+            allOk := false
+          | some recovered =>
+            let ok ← checkEq "AEAD round trip" message recovered
+            allOk := allOk && ok
+          let badTag := ByteArray.mk (tag.data.modify 0 (· ^^^ 1))
+          if (← decrypt aesKey.bytes nonce ciphertext badTag aad).isSome then
+            IO.eprintln "  invalid authentication tag was accepted"
+            allOk := false
+          let invalidTagRejected ← expectThrows
+            (decrypt aesKey.bytes nonce ciphertext ByteArray.empty aad)
+          if !invalidTagRejected then
+            IO.eprintln "  invalid tag setup did not throw an IO error"
+          allOk := allOk && invalidTagRejected
+        return allOk }
   ]
 
 end Test

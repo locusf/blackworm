@@ -54,6 +54,11 @@ for any other natural output size (a PKCS#7-padded AES ciphertext, an HKDF
 output, ...) `fitTo` cycles or truncates it to 256 bits before it is XORed
 into the other half, so the halves never grow or shrink.
 
+The chain validates two 32-byte halves at entry and after every link.
+Invalid block dimensions throw an IO error, even for an empty chain.
+This is a runtime size check, not a proof that custom forward/inverse
+functions cancel each other.
+
 ```mermaid
 flowchart TB
     B["512-bit block (BLOCK_BITS)"]
@@ -183,6 +188,31 @@ encrypt: b -> pair1.forward -> pair2.forward -> pair3.forward -> c
 decrypt: c -> pair3.inverse -> pair2.inverse -> pair1.inverse -> b
 ```
 
+## 5. Variable-length messages
+
+`encryptMessageIO` pads arbitrary bytes with PKCS#7 to a multiple of
+64 bytes, then runs the chain independently on each 512-bit block.
+The padding byte is the number of bytes added (1–64); empty and aligned
+messages receive a full padding block.
+
+```mermaid
+flowchart LR
+    M["Message: any byte length"] --> PAD["PKCS#7 padding to 64-byte boundary"]
+    PAD --> SPLIT["Split into 512-bit blocks"]
+    SPLIT --> E["feistelChainIO on each block"]
+    E --> C["Concatenate ciphertext blocks"]
+    C --> D["Split; feistelDechainIO on each block"]
+    D --> CHECK["Check all padding bytes; remove padding"]
+    CHECK --> OUT["Original message bytes"]
+```
+
+`decryptMessageIO` rejects empty/non-aligned ciphertext and malformed
+padding. Neither direction silently truncates oversized inputs.
+**This deterministic, independent-block framing is unauthenticated and
+reveals repeated plaintext blocks.** It is not a secure message-encryption
+mode; successful unpadding is not authentication. Message framing is
+runtime-tested, not covered by the abstract Feistel proofs.
+
 ## Where each piece lives
 
 | Concept in the diagrams | Concrete (`Blackworm/Basic.lean`) | Abstract proof (`Blackworm/FeistelTheory.lean`) |
@@ -197,3 +227,4 @@ decrypt: c -> pair3.inverse -> pair2.inverse -> pair1.inverse -> b
 | Chain of heterogeneous rounds/blocks | `feistelChainIO` calls each pair's `forward` | `RoundSpec`, `encryptChain` (§`Chain`, Feistel case) |
 | Reverse-order (transpose) decryption | `feistelDechainIO` calls `inverse` over `specs.reverse` | `decryptChain`, `decryptChain_eq_foldl_reverse` |
 | Abstract Feistel end-to-end correctness | — (not a proof of custom IO pairs or FFI) | `decryptChain_encryptChain`, `feistelDecrypt_feistelEncrypt` |
+| Variable-length framing | `encryptMessageIO`, `decryptMessageIO` | — (runtime tests only) |

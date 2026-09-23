@@ -6,6 +6,21 @@
 #include <stdlib.h>
 #include <lean/lean.h>
 
+#if OPENSSL_VERSION_MAJOR < 3
+#error "Blackworm requires OpenSSL 3 or newer"
+#endif
+
+static lean_obj_res crypto_error(const char *message) {
+    return lean_io_result_mk_error(lean_mk_io_user_error(lean_mk_string(message)));
+}
+
+static lean_obj_res cipher_error(EVP_CIPHER_CTX *ctx, unsigned char *output,
+                                 const char *message) {
+    free(output);
+    EVP_CIPHER_CTX_free(ctx);
+    return crypto_error(message);
+}
+
 // SHA-256 Hash
 LEAN_EXPORT lean_obj_res openssl_sha256_hash(b_lean_obj_arg data) {
     unsigned char hash[EVP_MAX_MD_SIZE];
@@ -13,7 +28,7 @@ LEAN_EXPORT lean_obj_res openssl_sha256_hash(b_lean_obj_arg data) {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
 
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     size_t data_len = lean_sarray_size(data);
@@ -21,12 +36,15 @@ LEAN_EXPORT lean_obj_res openssl_sha256_hash(b_lean_obj_arg data) {
 
     if (!EVP_DigestInit_ex(ctx, EVP_sha256(), NULL)) {
         EVP_MD_CTX_free(ctx);
-        lean_internal_panic("SHA256 initialization failed");
+        return crypto_error("SHA256 initialization failed");
     }
-    EVP_DigestUpdate(ctx, data_ptr, data_len);
+    if (!EVP_DigestUpdate(ctx, data_ptr, data_len)) {
+        EVP_MD_CTX_free(ctx);
+        return crypto_error("SHA256 update failed");
+    }
     if (!EVP_DigestFinal_ex(ctx, hash, &hash_len)) {
         EVP_MD_CTX_free(ctx);
-        lean_internal_panic("SHA256 finalization failed");
+        return crypto_error("SHA256 finalization failed");
     }
     EVP_MD_CTX_free(ctx);
 
@@ -42,7 +60,7 @@ LEAN_EXPORT lean_obj_res openssl_sha3_256_hash(b_lean_obj_arg data) {
     EVP_MD_CTX *ctx = EVP_MD_CTX_new();
 
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     size_t data_len = lean_sarray_size(data);
@@ -50,12 +68,15 @@ LEAN_EXPORT lean_obj_res openssl_sha3_256_hash(b_lean_obj_arg data) {
 
     if (!EVP_DigestInit_ex(ctx, EVP_sha3_256(), NULL)) {
         EVP_MD_CTX_free(ctx);
-        lean_internal_panic("SHA3-256 initialization failed");
+        return crypto_error("SHA3-256 initialization failed");
     }
-    EVP_DigestUpdate(ctx, data_ptr, data_len);
+    if (!EVP_DigestUpdate(ctx, data_ptr, data_len)) {
+        EVP_MD_CTX_free(ctx);
+        return crypto_error("SHA3-256 update failed");
+    }
     if (!EVP_DigestFinal_ex(ctx, hash, &hash_len)) {
         EVP_MD_CTX_free(ctx);
-        lean_internal_panic("SHA3-256 finalization failed");
+        return crypto_error("SHA3-256 finalization failed");
     }
     EVP_MD_CTX_free(ctx);
 
@@ -68,13 +89,13 @@ LEAN_EXPORT lean_obj_res openssl_sha3_256_hash(b_lean_obj_arg data) {
 LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_encrypt(b_lean_obj_arg key, b_lean_obj_arg plaintext) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char *out = malloc(lean_sarray_size(plaintext) + 16);
     if (out == NULL) {
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     int len = 0, ciphertext_len;
@@ -83,16 +104,18 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_encrypt(b_lean_obj_arg key, b_lean_
                            (unsigned char *)lean_sarray_cptr(key), NULL)) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-ECB initialization failed");
+        return crypto_error("AES-256-ECB initialization failed");
     }
-    EVP_EncryptUpdate(ctx, out, &len,
+    if (!EVP_EncryptUpdate(ctx, out, &len,
                       (unsigned char *)lean_sarray_cptr(plaintext),
-                      lean_sarray_size(plaintext));
+                      lean_sarray_size(plaintext))) {
+        return cipher_error(ctx, out, "Cipher data update failed");
+    }
     ciphertext_len = len;
     if (!EVP_EncryptFinal_ex(ctx, out + len, &len)) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-ECB encryption finalization failed");
+        return crypto_error("AES-256-ECB encryption finalization failed");
     }
     ciphertext_len += len;
     EVP_CIPHER_CTX_free(ctx);
@@ -107,13 +130,13 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_encrypt(b_lean_obj_arg key, b_lean_
 LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt(b_lean_obj_arg key, b_lean_obj_arg ciphertext) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char *out = malloc(lean_sarray_size(ciphertext) + 16);
     if (out == NULL) {
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     int len = 0, plaintext_len;
@@ -122,16 +145,18 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt(b_lean_obj_arg key, b_lean_
                            (unsigned char *)lean_sarray_cptr(key), NULL)) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-ECB decryption initialization failed");
+        return crypto_error("AES-256-ECB decryption initialization failed");
     }
-    EVP_DecryptUpdate(ctx, out, &len,
+    if (!EVP_DecryptUpdate(ctx, out, &len,
                       (unsigned char *)lean_sarray_cptr(ciphertext),
-                      lean_sarray_size(ciphertext));
+                      lean_sarray_size(ciphertext))) {
+        return cipher_error(ctx, out, "Cipher data update failed");
+    }
     plaintext_len = len;
     if (!EVP_DecryptFinal_ex(ctx, out + len, &len)) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-ECB decryption finalization failed");
+        return crypto_error("AES-256-ECB decryption finalization failed");
     }
     plaintext_len += len;
     EVP_CIPHER_CTX_free(ctx);
@@ -145,8 +170,8 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt(b_lean_obj_arg key, b_lean_
 // AES-256-ECB Decrypt, PKCS#7 padding disabled.
 //
 // `openssl_aes_256_ecb_decrypt` above validates and strips PKCS#7 padding,
-// so it fails (fatally, since it's a hard panic) on any input that isn't
-// genuine padded ciphertext. Turning padding off makes AES-256-ECB
+// so it returns an IO error when padding is invalid.
+// Turning padding off makes AES-256-ECB
 // decryption a *total* keyed permutation over exact multiples of the AES
 // block size: every such input decrypts to some fixed-length output, with
 // no notion of "invalid ciphertext" to reject. That makes it safe to use as
@@ -157,13 +182,13 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt(b_lean_obj_arg key, b_lean_
 LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt_nopad(b_lean_obj_arg key, b_lean_obj_arg data) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char *out = malloc(lean_sarray_size(data) + 16);
     if (out == NULL) {
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     int len = 0, out_len;
@@ -172,12 +197,16 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt_nopad(b_lean_obj_arg key, b
                            (unsigned char *)lean_sarray_cptr(key), NULL)) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-ECB (no padding) decryption initialization failed");
+        return crypto_error("AES-256-ECB (no padding) decryption initialization failed");
     }
-    EVP_CIPHER_CTX_set_padding(ctx, 0);
-    EVP_DecryptUpdate(ctx, out, &len,
+    if (!EVP_CIPHER_CTX_set_padding(ctx, 0)) {
+        return cipher_error(ctx, out, "Disabling cipher padding failed");
+    }
+    if (!EVP_DecryptUpdate(ctx, out, &len,
                       (unsigned char *)lean_sarray_cptr(data),
-                      lean_sarray_size(data));
+                      lean_sarray_size(data))) {
+        return cipher_error(ctx, out, "Cipher data update failed");
+    }
     out_len = len;
     if (!EVP_DecryptFinal_ex(ctx, out + len, &len)) {
         free(out);
@@ -186,7 +215,7 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt_nopad(b_lean_obj_arg key, b
         // data whose length isn't a multiple of the AES block size; Lean
         // callers validate that before reaching here (see
         // `Crypto.decryptAES256ECBNoPad`).
-        lean_internal_panic("AES-256-ECB (no padding) decryption finalization failed -- input size was not a multiple of the AES block size");
+        return crypto_error("AES-256-ECB (no padding) decryption finalization failed -- input size was not a multiple of the AES block size");
     }
     out_len += len;
     EVP_CIPHER_CTX_free(ctx);
@@ -201,13 +230,13 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_ecb_decrypt_nopad(b_lean_obj_arg key, b
 LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_encrypt(b_lean_obj_arg key, b_lean_obj_arg iv, b_lean_obj_arg plaintext) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char *out = malloc(lean_sarray_size(plaintext) + 16);
     if (out == NULL) {
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     int len = 0, ciphertext_len;
@@ -217,16 +246,18 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_encrypt(b_lean_obj_arg key, b_lean_
                            (unsigned char *)lean_sarray_cptr(iv))) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-CBC encryption initialization failed");
+        return crypto_error("AES-256-CBC encryption initialization failed");
     }
-    EVP_EncryptUpdate(ctx, out, &len,
+    if (!EVP_EncryptUpdate(ctx, out, &len,
                       (unsigned char *)lean_sarray_cptr(plaintext),
-                      lean_sarray_size(plaintext));
+                      lean_sarray_size(plaintext))) {
+        return cipher_error(ctx, out, "Cipher data update failed");
+    }
     ciphertext_len = len;
     if (!EVP_EncryptFinal_ex(ctx, out + len, &len)) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-CBC encryption finalization failed");
+        return crypto_error("AES-256-CBC encryption finalization failed");
     }
     ciphertext_len += len;
     EVP_CIPHER_CTX_free(ctx);
@@ -241,13 +272,13 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_encrypt(b_lean_obj_arg key, b_lean_
 LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_decrypt(b_lean_obj_arg key, b_lean_obj_arg iv, b_lean_obj_arg ciphertext) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char *out = malloc(lean_sarray_size(ciphertext) + 16);
     if (out == NULL) {
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     int len = 0, plaintext_len;
@@ -257,16 +288,18 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_decrypt(b_lean_obj_arg key, b_lean_
                            (unsigned char *)lean_sarray_cptr(iv))) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-CBC decryption initialization failed");
+        return crypto_error("AES-256-CBC decryption initialization failed");
     }
-    EVP_DecryptUpdate(ctx, out, &len,
+    if (!EVP_DecryptUpdate(ctx, out, &len,
                       (unsigned char *)lean_sarray_cptr(ciphertext),
-                      lean_sarray_size(ciphertext));
+                      lean_sarray_size(ciphertext))) {
+        return cipher_error(ctx, out, "Cipher data update failed");
+    }
     plaintext_len = len;
     if (!EVP_DecryptFinal_ex(ctx, out + len, &len)) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-CBC decryption finalization failed");
+        return crypto_error("AES-256-CBC decryption finalization failed");
     }
     plaintext_len += len;
     EVP_CIPHER_CTX_free(ctx);
@@ -283,13 +316,13 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_decrypt(b_lean_obj_arg key, b_lean_
 LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_decrypt_nopad(b_lean_obj_arg key, b_lean_obj_arg iv, b_lean_obj_arg data) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char *out = malloc(lean_sarray_size(data) + 16);
     if (out == NULL) {
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     int len = 0, out_len;
@@ -299,17 +332,21 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_cbc_decrypt_nopad(b_lean_obj_arg key, b
                            (unsigned char *)lean_sarray_cptr(iv))) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-CBC (no padding) decryption initialization failed");
+        return crypto_error("AES-256-CBC (no padding) decryption initialization failed");
     }
-    EVP_CIPHER_CTX_set_padding(ctx, 0);
-    EVP_DecryptUpdate(ctx, out, &len,
+    if (!EVP_CIPHER_CTX_set_padding(ctx, 0)) {
+        return cipher_error(ctx, out, "Disabling cipher padding failed");
+    }
+    if (!EVP_DecryptUpdate(ctx, out, &len,
                       (unsigned char *)lean_sarray_cptr(data),
-                      lean_sarray_size(data));
+                      lean_sarray_size(data))) {
+        return cipher_error(ctx, out, "Cipher data update failed");
+    }
     out_len = len;
     if (!EVP_DecryptFinal_ex(ctx, out + len, &len)) {
         free(out);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-CBC (no padding) decryption finalization failed -- input size was not a multiple of the AES block size");
+        return crypto_error("AES-256-CBC (no padding) decryption finalization failed -- input size was not a multiple of the AES block size");
     }
     out_len += len;
     EVP_CIPHER_CTX_free(ctx);
@@ -325,13 +362,13 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_gcm_encrypt(b_lean_obj_arg key, b_lean_
                                                      b_lean_obj_arg plaintext, b_lean_obj_arg aad) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char *ciphertext = malloc(lean_sarray_size(plaintext) + 16);
     if (ciphertext == NULL) {
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char tag[16];
@@ -342,29 +379,33 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_gcm_encrypt(b_lean_obj_arg key, b_lean_
                            (unsigned char *)lean_sarray_cptr(iv))) {
         free(ciphertext);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-GCM encryption initialization failed");
+        return crypto_error("AES-256-GCM encryption initialization failed");
     }
 
     if (lean_sarray_size(aad) > 0) {
-        EVP_EncryptUpdate(ctx, NULL, &len,
+        if (!EVP_EncryptUpdate(ctx, NULL, &len,
                          (unsigned char *)lean_sarray_cptr(aad),
-                         lean_sarray_size(aad));
+                         lean_sarray_size(aad))) {
+            return cipher_error(ctx, ciphertext, "Cipher AAD update failed");
+        }
     }
 
-    EVP_EncryptUpdate(ctx, ciphertext, &len,
+    if (!EVP_EncryptUpdate(ctx, ciphertext, &len,
                       (unsigned char *)lean_sarray_cptr(plaintext),
-                      lean_sarray_size(plaintext));
+                      lean_sarray_size(plaintext))) {
+        return cipher_error(ctx, ciphertext, "Cipher data update failed");
+    }
     ciphertext_len = len;
     if (!EVP_EncryptFinal_ex(ctx, ciphertext + len, &len)) {
         free(ciphertext);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-GCM encryption finalization failed");
+        return crypto_error("AES-256-GCM encryption finalization failed");
     }
     ciphertext_len += len;
     if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, 16, tag)) {
         free(ciphertext);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("AES-256-GCM tag retrieval failed");
+        return crypto_error("AES-256-GCM tag retrieval failed");
     }
     EVP_CIPHER_CTX_free(ctx);
 
@@ -387,13 +428,13 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_gcm_decrypt(b_lean_obj_arg key, b_lean_
                                                      b_lean_obj_arg aad) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char *plaintext = malloc(lean_sarray_size(ciphertext) + 16);
     if (plaintext == NULL) {
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     int len = 0, plaintext_len;
@@ -403,25 +444,29 @@ LEAN_EXPORT lean_obj_res openssl_aes_256_gcm_decrypt(b_lean_obj_arg key, b_lean_
                            (unsigned char *)lean_sarray_cptr(iv))) {
         free(plaintext);
         EVP_CIPHER_CTX_free(ctx);
-        return lean_io_result_mk_ok(lean_box(0));  // None
+        return crypto_error("AES-256-GCM decryption initialization failed");
     }
 
     if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, lean_sarray_size(tag),
                             (unsigned char *)lean_sarray_cptr(tag))) {
         free(plaintext);
         EVP_CIPHER_CTX_free(ctx);
-        return lean_io_result_mk_ok(lean_box(0));  // None
+        return crypto_error("AES-256-GCM tag setup failed");
     }
 
     if (lean_sarray_size(aad) > 0) {
-        EVP_DecryptUpdate(ctx, NULL, &len,
+        if (!EVP_DecryptUpdate(ctx, NULL, &len,
                          (unsigned char *)lean_sarray_cptr(aad),
-                         lean_sarray_size(aad));
+                         lean_sarray_size(aad))) {
+            return cipher_error(ctx, plaintext, "Cipher AAD update failed");
+        }
     }
 
-    EVP_DecryptUpdate(ctx, plaintext, &len,
+    if (!EVP_DecryptUpdate(ctx, plaintext, &len,
                       (unsigned char *)lean_sarray_cptr(ciphertext),
-                      lean_sarray_size(ciphertext));
+                      lean_sarray_size(ciphertext))) {
+        return cipher_error(ctx, plaintext, "Cipher data update failed");
+    }
     plaintext_len = len;
 
     int ret = EVP_DecryptFinal_ex(ctx, plaintext + len, &len);
@@ -447,13 +492,13 @@ LEAN_EXPORT lean_obj_res openssl_chacha20_poly1305_encrypt(b_lean_obj_arg key, b
                                                            b_lean_obj_arg plaintext, b_lean_obj_arg aad) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char *ciphertext = malloc(lean_sarray_size(plaintext) + 16);
     if (ciphertext == NULL) {
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char tag[16];
@@ -464,29 +509,33 @@ LEAN_EXPORT lean_obj_res openssl_chacha20_poly1305_encrypt(b_lean_obj_arg key, b
                            (unsigned char *)lean_sarray_cptr(nonce))) {
         free(ciphertext);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("ChaCha20-Poly1305 encryption initialization failed");
+        return crypto_error("ChaCha20-Poly1305 encryption initialization failed");
     }
 
     if (lean_sarray_size(aad) > 0) {
-        EVP_EncryptUpdate(ctx, NULL, &len,
+        if (!EVP_EncryptUpdate(ctx, NULL, &len,
                          (unsigned char *)lean_sarray_cptr(aad),
-                         lean_sarray_size(aad));
+                         lean_sarray_size(aad))) {
+            return cipher_error(ctx, ciphertext, "Cipher AAD update failed");
+        }
     }
 
-    EVP_EncryptUpdate(ctx, ciphertext, &len,
+    if (!EVP_EncryptUpdate(ctx, ciphertext, &len,
                       (unsigned char *)lean_sarray_cptr(plaintext),
-                      lean_sarray_size(plaintext));
+                      lean_sarray_size(plaintext))) {
+        return cipher_error(ctx, ciphertext, "Cipher data update failed");
+    }
     ciphertext_len = len;
     if (!EVP_EncryptFinal_ex(ctx, ciphertext + len, &len)) {
         free(ciphertext);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("ChaCha20-Poly1305 encryption finalization failed");
+        return crypto_error("ChaCha20-Poly1305 encryption finalization failed");
     }
     ciphertext_len += len;
     if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, tag)) {
         free(ciphertext);
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic("ChaCha20-Poly1305 tag retrieval failed");
+        return crypto_error("ChaCha20-Poly1305 tag retrieval failed");
     }
     EVP_CIPHER_CTX_free(ctx);
 
@@ -509,13 +558,13 @@ LEAN_EXPORT lean_obj_res openssl_chacha20_poly1305_decrypt(b_lean_obj_arg key, b
                                                            b_lean_obj_arg aad) {
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     if (ctx == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char *plaintext = malloc(lean_sarray_size(ciphertext) + 16);
     if (plaintext == NULL) {
         EVP_CIPHER_CTX_free(ctx);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     int len = 0, plaintext_len;
@@ -525,25 +574,29 @@ LEAN_EXPORT lean_obj_res openssl_chacha20_poly1305_decrypt(b_lean_obj_arg key, b
                            (unsigned char *)lean_sarray_cptr(nonce))) {
         free(plaintext);
         EVP_CIPHER_CTX_free(ctx);
-        return lean_io_result_mk_ok(lean_box(0));  // None
+        return crypto_error("ChaCha20-Poly1305 decryption initialization failed");
     }
 
     if (!EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, lean_sarray_size(tag),
                             (unsigned char *)lean_sarray_cptr(tag))) {
         free(plaintext);
         EVP_CIPHER_CTX_free(ctx);
-        return lean_io_result_mk_ok(lean_box(0));  // None
+        return crypto_error("ChaCha20-Poly1305 tag setup failed");
     }
 
     if (lean_sarray_size(aad) > 0) {
-        EVP_DecryptUpdate(ctx, NULL, &len,
+        if (!EVP_DecryptUpdate(ctx, NULL, &len,
                          (unsigned char *)lean_sarray_cptr(aad),
-                         lean_sarray_size(aad));
+                         lean_sarray_size(aad))) {
+            return cipher_error(ctx, plaintext, "Cipher AAD update failed");
+        }
     }
 
-    EVP_DecryptUpdate(ctx, plaintext, &len,
+    if (!EVP_DecryptUpdate(ctx, plaintext, &len,
                       (unsigned char *)lean_sarray_cptr(ciphertext),
-                      lean_sarray_size(ciphertext));
+                      lean_sarray_size(ciphertext))) {
+        return cipher_error(ctx, plaintext, "Cipher data update failed");
+    }
     plaintext_len = len;
 
     int ret = EVP_DecryptFinal_ex(ctx, plaintext + len, &len);
@@ -575,7 +628,7 @@ LEAN_EXPORT lean_obj_res openssl_hkdf_sha256(b_lean_obj_arg salt, b_lean_obj_arg
     unsigned char *okm = malloc(out_len);
 
     if (okm == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     unsigned char prk[EVP_MAX_MD_SIZE];
@@ -584,7 +637,7 @@ LEAN_EXPORT lean_obj_res openssl_hkdf_sha256(b_lean_obj_arg salt, b_lean_obj_arg
 
     if (ctx == NULL) {
         free(okm);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     // Extract phase: PRK = HMAC-Hash(salt, IKM)
@@ -601,25 +654,30 @@ LEAN_EXPORT lean_obj_res openssl_hkdf_sha256(b_lean_obj_arg salt, b_lean_obj_arg
     if (!EVP_DigestInit_ex(ctx, EVP_sha256(), NULL)) {
         EVP_MD_CTX_free(ctx);
         free(okm);
-        lean_internal_panic("HKDF extract init failed");
+        return crypto_error("HKDF extract init failed");
     }
 
     HMAC_CTX *hmac = HMAC_CTX_new();
     if (hmac == NULL) {
         EVP_MD_CTX_free(ctx);
         free(okm);
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     if (!HMAC_Init_ex(hmac, salt_ptr, salt_len, EVP_sha256(), NULL)) {
         HMAC_CTX_free(hmac);
         EVP_MD_CTX_free(ctx);
         free(okm);
-        lean_internal_panic("HMAC init failed");
+        return crypto_error("HMAC init failed");
     }
 
-    HMAC_Update(hmac, (unsigned char *)lean_sarray_cptr(ikm), lean_sarray_size(ikm));
-    HMAC_Final(hmac, prk, &prk_len);
+    if (!HMAC_Update(hmac, (unsigned char *)lean_sarray_cptr(ikm), lean_sarray_size(ikm)) ||
+        !HMAC_Final(hmac, prk, &prk_len)) {
+        HMAC_CTX_free(hmac);
+        EVP_MD_CTX_free(ctx);
+        free(okm);
+        return crypto_error("HKDF extract failed");
+    }
 
     // Expand phase: T = T(1) | T(2) | T(3) | ... where T(N) = HMAC-Hash(PRK, T(N-1) | info | N)
     unsigned char *out_pos = okm;
@@ -633,15 +691,18 @@ LEAN_EXPORT lean_obj_res openssl_hkdf_sha256(b_lean_obj_arg salt, b_lean_obj_arg
             HMAC_CTX_free(hmac);
             EVP_MD_CTX_free(ctx);
             free(okm);
-            lean_internal_panic("HKDF expand init failed");
+            return crypto_error("HKDF expand init failed");
         }
 
-        if (t_len > 0) {
-            HMAC_Update(hmac, t, t_len);
+        if ((t_len > 0 && !HMAC_Update(hmac, t, t_len)) ||
+            !HMAC_Update(hmac, (unsigned char *)lean_sarray_cptr(info), lean_sarray_size(info)) ||
+            !HMAC_Update(hmac, &counter, 1) ||
+            !HMAC_Final(hmac, t, &t_len)) {
+            HMAC_CTX_free(hmac);
+            EVP_MD_CTX_free(ctx);
+            free(okm);
+            return crypto_error("HKDF expand failed");
         }
-        HMAC_Update(hmac, (unsigned char *)lean_sarray_cptr(info), lean_sarray_size(info));
-        HMAC_Update(hmac, &counter, 1);
-        HMAC_Final(hmac, t, &t_len);
 
         size_t copy_len = (remaining < t_len) ? remaining : t_len;
         memcpy(out_pos, t, copy_len);
@@ -666,7 +727,7 @@ LEAN_EXPORT lean_obj_res openssl_pbkdf2_sha256(b_lean_obj_arg password, b_lean_o
     unsigned char *key = malloc(klen);
 
     if (key == NULL) {
-        lean_internal_panic_out_of_memory();
+        return crypto_error("OpenSSL allocation failed");
     }
 
     int ret = PKCS5_PBKDF2_HMAC((char *)lean_sarray_cptr(password), lean_sarray_size(password),
@@ -676,7 +737,7 @@ LEAN_EXPORT lean_obj_res openssl_pbkdf2_sha256(b_lean_obj_arg password, b_lean_o
 
     if (ret <= 0) {
         free(key);
-        lean_internal_panic("PBKDF2 derivation failed");
+        return crypto_error("PBKDF2 derivation failed");
     }
 
     lean_object *result = lean_alloc_sarray(1, klen, klen);

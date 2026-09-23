@@ -70,14 +70,15 @@ def defaultCases (blockCount : Nat := 64) : IO (Array BenchCase) := do
   -- (`feistelWithAES256ECBDecrypt`/`CBCDecrypt`) are still excluded, since a
   -- forward chain link never sees genuine ciphertext -- it only ever sees
   -- the previous link's output XORed into the other half -- so a bare
-  -- padded-decrypt link would be fed non-ciphertext and abort the process
+  -- padded-decrypt link could fail with an invalid-padding IO error
   -- (this is also how the C++ `feistelizer` project, `src/derive/variants.h`,
   -- sidesteps the issue: its `decipher` reuses the forward-encrypt round
   -- functions in reverse rather than calling an AES decrypt primitive at
   -- all). Here, though, AES decrypt *is* used directly as an ordinary
   -- one-way link -- via `feistelWithAES256ECBDecryptNoPad`/
   -- `CBCDecryptNoPad`, which disable PKCS#7 padding and so are total,
-  -- always-succeeding permutations safe on arbitrary chain state. The
+  -- permutations defined on arbitrary chain state (native failures still
+  -- throw IO errors). The
   -- chain's decryption direction below (`feistelDechainIO`,
   -- `feistelRoundInvIO`) undoes every link -- including these one-way AES
   -- decrypt links -- by reapplying the same forward functions in reverse,

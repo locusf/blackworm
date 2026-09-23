@@ -17,7 +17,7 @@ integrated into the Blackworm project via OpenSSL.
 - Operations: 64 rounds with sigma and hashing functions
 
 **Security Level**: 128-bit (collision resistance)
-**RFC**: RFC 3174, FIPS 180-4
+**Standard**: FIPS 180-4 (RFC 3174 describes SHA-1, not SHA-256)
 
 **Lean Implementation**:
 ```lean
@@ -35,7 +35,7 @@ let hash ← hash256 msg
 - Message integrity verification
 - Digital signatures (with RSA/ECDSA)
 - Merkle trees and blockchain applications
-- Password hashing (with salt)
+- As a component of password KDFs such as PBKDF2, not raw password hashing
 - HMAC construction
 
 **Performance**: ~100-200 MB/s on modern CPUs
@@ -46,11 +46,13 @@ let hash ← hash256 msg
 
 **Overview**: Sponge-based hash function from the SHA-3 family (Keccak)
 - Output size: 256 bits (32 bytes)
-- Capacity: 512 bits (implies security level 256)
+- Capacity: 512 bits
 - State: 1600-bit permutation
 - Padding: Sponge construction
 
-**Security Level**: 256-bit (post-quantum secure)
+**Generic classical security**: 128-bit collision resistance and 256-bit
+preimage resistance. Quantum algorithms reduce generic attack costs;
+256-bit output is not a claim of 256-bit post-quantum security.
 **FIPS**: FIPS 202
 
 **Lean Implementation**:
@@ -58,10 +60,10 @@ let hash ← hash256 msg
 def hash3_256 (data : ByteArray) : IO SHA3_256Hash
 ```
 
-**Advantages over SHA-256**:
-- More resistant to extension attacks
+**Differences from SHA-256**:
+- Not subject to SHA-256's conventional length-extension construction
 - Different security paradigm (sponge vs Merkle-Damgård)
-- Better cryptanalysis confidence
+- A separate design family; not a blanket claim of greater security
 
 ---
 
@@ -69,10 +71,10 @@ def hash3_256 (data : ByteArray) : IO SHA3_256Hash
 
 #### 1. AES-256 (Advanced Encryption Standard - 256-bit key)
 
-**Overview**: Block cipher using 256-bit keys with 10/12/14 rounds
+**Overview**: Block cipher using 256-bit keys with 14 rounds
 - Key size: 256 bits (32 bytes)
 - Block size: 128 bits (16 bytes)
-- Rounds: 14 rounds for key expansion and encryption
+- Rounds: 14 encryption rounds, using an expanded key schedule
 - Mode-dependent security
 
 **Modes Implemented**:
@@ -235,7 +237,7 @@ def pbkdf2 (password : ByteArray) (salt : ByteArray) (iterations : Nat) (keyLeng
    - Use key derivation for password material
 
 4. **Random Generation**:
-   - Use `OpenSSL_random()` or `/dev/urandom` for keys/nonsense
+   - Use an operating-system CSPRNG or OpenSSL `RAND_bytes` for random keys/nonces
 
 ---
 

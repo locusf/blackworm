@@ -8,7 +8,7 @@ Your Blackworm project now has complete integration with OpenSSL's 256-bit crypt
 
 #### Hash Functions (256-bit outputs)
 - **SHA-256**: FIPS-standardized cryptographic hash
-- **SHA3-256**: Sponge-based hash (more secure, post-quantum resistant)
+- **SHA3-256**: Sponge-based hash (256-bit output; 128-bit generic classical collision resistance)
 
 #### Symmetric Encryption (256-bit keys)
 - **AES-256-ECB**: Simple block cipher mode (ECB - not for sensitive data)
@@ -68,14 +68,14 @@ Your Blackworm project now has complete integration with OpenSSL's 256-bit crypt
 
 ### 🔧 Modified Files
 
-1. **lakefile.toml**
-   - Added OpenSSL dependency configuration
-   - Added cryptographic keywords
-   - Configured foreign library linking
+1. **lakefile.lean**
+   - Tracks native C compilation with Lake's `extern_lib`
+   - Links the FFI shim statically and OpenSSL via `-lssl -lcrypto`
+   - Rebuilds native dependencies automatically for tests and benchmarks
 
 2. **Blackworm/Basic.lean**
    - Added OpenSSL integration examples
-   - Cryptographically secure Feistel cipher functions
+   - Experimental Feistel functions with a separately proved abstract invertibility model
    - Key derivation from passwords
    - SHA-256 based round functions
    - AES-256-GCM block encryption
@@ -186,7 +186,7 @@ All functions return `IO` types with proper error handling:
 -- Hash functions never fail
 let hash ← hash256 data
 
--- Encryption always succeeds
+-- Native failures throw IO errors; authentication failure on decryption returns none
 let result ← encryptAES256GCM key iv plaintext
 
 -- Decryption can fail (authentication)
@@ -248,4 +248,3 @@ make
 **Tested Platforms**: Linux (Ubuntu 20.04+), macOS 12+
 
 **OpenSSL Requirement**: 3.0.0 or higher
-

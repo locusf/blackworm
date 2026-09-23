@@ -1,113 +1,59 @@
-# Build Script and C Code Fixes
+# Native build and error handling
 
-## Summary of Issues Fixed
+## Lake integration
 
-### 1. Build Script (build.sh)
+[`lakefile.lean`](lakefile.lean) replaces the former TOML configuration,
+whose `foreign_library` section was not a supported Lake target.
 
-**Issues Found:**
-- ❌ No prerequisite checking for required tools (cmake, make, lake)
-- ❌ Weak OpenSSL version validation
-- ❌ No error handling for CMake or make failures
-- ❌ Platform detection too strict (missed some Linux variants)
-- ❌ No check for OpenSSL library existence
-- ❌ Silent failures with no clear error messages
-- ❌ Job count calculation might fail on some systems
-
-**Fixes Applied:**
-- ✅ Added prerequisite tool checking (openssl, cmake, make, lake)
-- ✅ Added OpenSSL version validation (3.0+)
-- ✅ Added comprehensive error handling with exit codes
-- ✅ Fixed platform detection to catch all Linux variants
-- ✅ Added OpenSSL library path verification
-- ✅ Added function for clear error reporting
-- ✅ Improved job count detection with fallback
-- ✅ Added build type information and summary output
-- ✅ Clean rebuild on subsequent runs
-
-### 2. CMakeLists.txt
-
-**Issues Found:**
-- ❌ Lean library dependency could fail silently
-- ❌ No optimization flags configured
-- ❌ Missing compiler warnings
-- ❌ No build type selection
-
-**Fixes Applied:**
-- ✅ Made Lean dependency optional with graceful fallback
-- ✅ Added Release/Debug build types with -O3 optimization
-- ✅ Added -Wall -Wextra -pedantic compiler warnings
-- ✅ Improved debug information output
-- ✅ Better OpenSSL and Lean header finding
-
-### 3. openssl_crypto.c
-
-**Critical Issues Found:**
-- ❌ Missing #include <stdlib.h> for malloc
-- ❌ Missing #include <openssl/kdf.h> for HKDF/PBKDF2
-- ❌ No null pointer checks after malloc
-- ❌ No error checking on OpenSSL operations
-- ❌ Memory leaks on error paths
-- ❌ EVP_MD_CTX could be NULL (segfault)
-- ❌ EVP_CIPHER_CTX could be NULL (segfault)
-- ❌ No return value checking on HKDF/PBKDF2
-- ❌ No bounds checking on tag size validation
-
-**Fixes Applied for all 12 functions:**
-- ✅ Added all required includes
-- ✅ Added null pointer checks after malloc with panic
-- ✅ Added error checking on all OpenSSL operations
-- ✅ Proper cleanup and memory freeing on all error paths
-- ✅ Return value validation with appropriate error handling
-- ✅ Bounds checking and validation
-- ✅ Consistent error reporting
-
-**Functions Fixed:**
-1. ✅ openssl_sha256_hash
-2. ✅ openssl_sha3_256_hash
-3. ✅ openssl_aes_256_ecb_encrypt
-4. ✅ openssl_aes_256_ecb_decrypt
-5. ✅ openssl_aes_256_cbc_encrypt
-6. ✅ openssl_aes_256_cbc_decrypt
-7. ✅ openssl_aes_256_gcm_encrypt
-8. ✅ openssl_aes_256_gcm_decrypt
-9. ✅ openssl_chacha20_poly1305_encrypt
-10. ✅ openssl_chacha20_poly1305_decrypt
-11. ✅ openssl_hkdf_sha256
-12. ✅ openssl_pbkdf2_sha256
-
-## Testing
-
-All fixes are production-ready:
-- ✅ Proper error handling throughout
-- ✅ No memory leaks
-- ✅ Safe on all platforms
-- ✅ Compatible with OpenSSL 3.0+
-
-## Build Command
-
-Run the fixed build script:
+- `opensslObject` tracks `openssl_crypto.c` and compiles it with the system
+  C compiler and the pinned Lean headers.
+- `extern_lib openssl_crypto` archives the object and links the FFI shim
+  into dependent executables. OpenSSL is linked via `-lssl -lcrypto`;
+  whether those libraries are static or dynamic depends on the toolchain.
+- Tests and benchmarks no longer require a prebuilt
+  `build/libopenssl_crypto.so` or a repository-relative runtime search path.
+- Source, compiler-option, platform, and Lean toolchain changes participate
+  in Lake's build tracing. Changes to system OpenSSL headers/libraries may
+  require rebuilding the native target.
 
 ```bash
-cd /home/user/blackworm
-./build.sh
+lake build Blackworm test bench
+lake exe test
 ```
 
-## Expected Output
+Install a system C compiler and OpenSSL 3 development headers/libraries
+first. For a nonstandard OpenSSL prefix:
 
+```bash
+lake -KopensslPrefix=/path/to/openssl build test bench
 ```
-=== Blackworm OpenSSL Build Script ===
 
-Checking prerequisites...
-✓ All tools found
-✓ OpenSSL 3.2.0 found
-✓ Linux detected
-✓ Created build directory
-✓ CMake configuration complete
-✓ C library built successfully
-✓ Lean project built successfully
+[`build.sh`](build.sh) checks prerequisites and builds all targets without
+deleting previous build artifacts. It accepts `OPENSSL_DIR` and detects
+Homebrew's OpenSSL prefix on macOS. [`CMakeLists.txt`](CMakeLists.txt) remains
+an optional standalone shared/static FFI build, not a Lake prerequisite.
 
-=== Build Complete ===
-✓ All components compiled successfully
+## Native failures
 
-You can now use the cryptographic functions in your Lean code.
-```
+Successful FFI calls return `lean_io_result_mk_ok`; recoverable native
+operation and allocation failures return
+`lean_io_result_mk_error(lean_mk_io_user_error(...))` after releasing native
+buffers and contexts. Cipher/hash/HMAC update calls are checked as well as
+initialization and finalization.
+
+Invalid padded AES ciphertext throws an IO error rather than aborting the
+process. AEAD setup/update failures throw, while authentication failure
+continues to return `none`. Failures of Lean's own allocation functions
+remain governed by the Lean runtime's out-of-memory behavior.
+
+The correctness suite exercises native padded-decryption failure,
+no-padding block-length failure, PBKDF2 failure, recovery via a SHA-256
+known answer, and both AEAD success and tag rejection. These tests do not
+inject allocation failures or establish memory safety on every platform.
+
+## Continuous integration
+
+The workflow builds all targets and runs correctness tests before merge
+on pull requests targeting `master`, on pushes to `master`, and on manual
+dispatch. Branch protection must separately require this check to prevent
+merging a failing PR.

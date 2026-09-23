@@ -35,7 +35,8 @@ jobs:
         uses: leanprover/lean-action@v1
 
       # Build the openssl_crypto C FFI library used by Blackworm/OpenSSLBindings.lean
-      # (same steps as build.sh, without its interactive prerequisite checks).
+      # This optional standalone artifact is separate from Lake's tracked
+      # native library, which is built automatically for tests/benchmarks.
       - name: Build the OpenSSL FFI library
         run: |
           mkdir -p build

@@ -98,7 +98,8 @@ def feistelRoundInvIO (b : Block) (f : ByteArray → IO ByteArray) : IO Block :=
   return { left := xorByteArrays b.right (fitTo b.right.size fResult), right := b.left }
 
 /-- A chain link's forward and inverse block transformations. Custom links
-must preserve block sizes and supply mutually inverse transformations. -/
+must supply mutually inverse transformations. The chain checks block sizes,
+but cannot enforce the inverse relationship of arbitrary IO functions. -/
 structure CipherPair where
   forward : Block → IO Block
   inverse : Block → IO Block
@@ -109,15 +110,58 @@ def CipherPair.ofFeistel (f : ByteArray → IO ByteArray) : CipherPair :=
   { forward := fun b => feistelRoundIO b f,
     inverse := fun b => feistelRoundInvIO b f }
 
+/-- Validate the fixed-width chain boundary without truncating or padding state. -/
+def Block.validate (b : Block) : IO Unit := do
+  if b.left.size ≠ HALF_BLOCK_SIZE || b.right.size ≠ HALF_BLOCK_SIZE then
+    throw (IO.userError s!"Expected two {HALF_BLOCK_SIZE}-byte halves, got {b.left.size} and {b.right.size}")
+
+private def runCipherChain (steps : List (Block → IO Block)) (b : Block) : IO Block := do
+  b.validate
+  steps.foldlM (fun state step => do
+    let next ← step state
+    next.validate
+    return next) b
+
 -- Apply each link's forward block transformation from left to right.
 def feistelChainIO (specs : List CipherPair) (b : Block) : IO Block :=
-  specs.foldlM (fun b spec => spec.forward b) b
+  runCipherChain (specs.map (·.forward)) b
 
 -- Invert `feistelChainIO`: the round applied *first* during encryption must
 -- be undone *last* during decryption, so decryption walks the **transpose**
 -- (reverse) of the pair list, using each link's inverse transformation.
 def feistelDechainIO (specs : List CipherPair) (b : Block) : IO Block :=
-  specs.reverse.foldlM (fun b spec => spec.inverse b) b
+  runCipherChain (specs.reverse.map (·.inverse)) b
+
+/-- Pad a variable-length message with PKCS#7 bytes and transform each
+512-bit block independently. This is deterministic, unauthenticated framing,
+not a secure message-encryption mode; repeated plaintext blocks remain visible. -/
+def encryptMessageIO (specs : List CipherPair) (plaintext : ByteArray) : IO ByteArray := do
+  let padding := BLOCK_SIZE - plaintext.size % BLOCK_SIZE
+  let padded := plaintext ++ ByteArray.mk (Array.replicate padding (UInt8.ofNat padding))
+  let mut output := ByteArray.empty
+  for offset in [0:padded.size:BLOCK_SIZE] do
+    let block ← Block.ofBits512 (padded.extract offset (offset + BLOCK_SIZE))
+    let ciphertext ← feistelChainIO specs block
+    output := output ++ ciphertext.toBytes
+  return output
+
+/-- Reverse `encryptMessageIO` and reject invalid lengths or PKCS#7 padding.
+Valid padding is not authentication and does not detect all ciphertext changes. -/
+def decryptMessageIO (specs : List CipherPair) (ciphertext : ByteArray) : IO ByteArray := do
+  if ciphertext.isEmpty || ciphertext.size % BLOCK_SIZE ≠ 0 then
+    throw (IO.userError s!"Ciphertext must be a nonempty multiple of {BLOCK_SIZE} bytes")
+  let mut padded := ByteArray.empty
+  for offset in [0:ciphertext.size:BLOCK_SIZE] do
+    let block ← Block.ofBits512 (ciphertext.extract offset (offset + BLOCK_SIZE))
+    let plaintext ← feistelDechainIO specs block
+    padded := padded ++ plaintext.toBytes
+  let padding := (padded.get! (padded.size - 1)).toNat
+  if padding = 0 || padding > BLOCK_SIZE then
+    throw (IO.userError "Invalid message padding")
+  for i in [padded.size - padding:padded.size] do
+    if (padded.get! i).toNat ≠ padding then
+      throw (IO.userError "Invalid message padding")
+  return padded.extract 0 (padded.size - padding)
 
 -- Wrapper functions for specific crypto operations
 
@@ -143,9 +187,8 @@ def feistelWithAES256CBC (key : Crypto.AES256Key) (iv : Crypto.AES256IV) (data :
 --
 -- Unlike the encrypt-side wrappers above, this is *not* safe to feed
 -- arbitrary/derived Feistel state (e.g. a raw `feistelRound` half-block):
--- OpenSSL's PKCS#7 unpadding aborts the whole process (a fatal panic, not a
--- catchable `IO` error) if the input isn't genuine padded AES-256-ECB
--- ciphertext produced under the same key. Only call it on the output of
+-- OpenSSL's PKCS#7 unpadding throws an IO error on invalid padding.
+-- Only call it on genuine ciphertext produced under the same key, the output of
 -- `feistelWithAES256ECB` (or `Crypto.encryptAES256ECB`) with the same key --
 -- It does not undo a Feistel link: that inverse reuses the forward round
 -- function rather than decrypting the primitive's output.
@@ -154,7 +197,7 @@ def feistelWithAES256ECBDecrypt (key : Crypto.AES256Key) (data : ByteArray) : IO
 
 -- AES-256-CBC decryption with a fixed key and IV. See the caveat on
 -- `feistelWithAES256ECBDecrypt`: `data` must be genuine ciphertext produced
--- with the same key and IV, or the process aborts.
+-- with the same key and IV. Invalid padding throws an IO error.
 def feistelWithAES256CBCDecrypt (key : Crypto.AES256Key) (iv : Crypto.AES256IV) (data : ByteArray) : IO ByteArray := do
   Crypto.decryptAES256CBC key iv data
 
@@ -163,7 +206,7 @@ def feistelWithAES256CBCDecrypt (key : Crypto.AES256Key) (iv : Crypto.AES256IV) 
 -- safe to feed arbitrary Feistel state directly: with PKCS#7 padding
 -- removal disabled, AES-256-ECB decryption is a total keyed permutation
 -- over exact multiples of the AES block size (every half-block in this
--- codebase is 32 bytes, i.e. two AES blocks), so it never aborts. It isn't
+-- chain is 32 bytes, i.e. two AES blocks). Native failures still throw IO errors. It isn't
 -- "real" decryption of anything here -- it's the inverse cipher used purely
 -- as a pseudorandom scrambling function, exactly as legitimate an `F` as
 -- `feistelWithAES256ECB` (encryption) or a hash.

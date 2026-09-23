@@ -14,9 +14,9 @@ Blackworm is a Lean 4 project with two intertwined halves:
 ## Build
 
 ```bash
-lake build          # builds the Lean project (pulls Mathlib per lakefile.toml)
-./build.sh           # full pipeline: checks OpenSSL/cmake/make/lake, builds the
-                      # openssl_crypto C FFI library via CMake, then `lake build`
+lake build          # builds the Lean library (Mathlib pinned in lakefile.lean)
+./build.sh          # checks prerequisites, builds all Lean/native targets
+lake exe test       # builds the native dependency and runs correctness checks
 ```
 
 - `.github/workflows/copilot-setup-steps.yml` preinstalls `libssl-dev`/`cmake`,
@@ -24,27 +24,31 @@ lake build          # builds the Lean project (pulls Mathlib per lakefile.toml)
   the OpenSSL FFI library for the Copilot cloud agent's environment — mirror
   it if the toolchain/dependency setup changes.
 
-- `lakefile.toml` declares a `[[foreign_library]]` named `openssl_crypto` that
-  compiles `openssl_crypto.c` and links `ssl`/`crypto`. `CMakeLists.txt` is an
+- `lakefile.lean` declares an `extern_lib` named `openssl_crypto` that
+  tracks and compiles `openssl_crypto.c`, statically links the FFI shim, and
+  links system `ssl`/`crypto`. `CMakeLists.txt` is an
   alternative/manual way to build the same C library (shared + static) if you
   need to invoke CMake directly instead of going through Lake.
 - Lean toolchain version is pinned in `lean-toolchain`
   (`leanprover/lean4:v4.34.0`); Mathlib is pinned to `v4.34.0` in
-  `lakefile.toml`'s `[[require]]` block — keep these in sync when upgrading.
-- `lake exe test` runs the eleven correctness cases in `Test/Suite.lean`
-  through `Test.lean`, exiting nonzero on failure. Build the OpenSSL C FFI
-  library first with `./build.sh`. The suite covers cipher pairs, Feistel
-  chains and rounds, and AES wrapper behavior. `Blackworm/CryptoExamples.lean`
+  `lakefile.lean`'s `require` declaration — keep these in sync when upgrading.
+- `lake exe test` runs the seventeen correctness cases in `Test/Suite.lean`
+  through `Test.lean`, exiting nonzero on failure. Lake builds the native
+  dependency automatically. The suite covers cipher pairs, Feistel chains
+  and rounds, padded messages, dimensions, and native error/AEAD behavior.
+  `Blackworm/CryptoExamples.lean`
   additionally contains illustrative `example : IO Unit` blocks.
   Proof obligations in `FeistelTheory.lean` are checked by `lake build`.
 
 ## Architecture
 
 - `Blackworm.lean` is the library root; it just imports `Blackworm.Basic` and
-  `Blackworm.FeistelTheory` (per `[[lean_lib]] name = "Blackworm"` in
-  `lakefile.toml`).
+  `Blackworm.FeistelTheory` (per `lean_lib Blackworm` in `lakefile.lean`).
 - FFI/crypto stack, low-level to high-level:
   - `openssl_crypto.c` — native C implementations calling OpenSSL's EVP API.
+    Native operation/allocation failures return IO errors after cleanup;
+    AEAD authentication failure remains `none`. Lean-runtime allocation
+    itself still follows Lean's out-of-memory policy.
   - `Blackworm/OpenSSLBindings.lean` — `@[extern "openssl_..."] opaque ...`
     declarations that bind 1:1 to the C functions, plus raw size constants
     (`AES_256_KEY_SIZE`, etc.). Adding a new primitive means adding it here
@@ -63,11 +67,16 @@ lake build          # builds the Lean project (pulls Mathlib per lakefile.toml)
       holding `forward` and `inverse` functions of type `Block → IO Block`.
       `CipherPair.ofFeistel` adapts an existing half-block round function,
       reusing it in both Feistel directions. Custom pairs must be mutually
-      inverse and preserve block sizes. **Decryption must walk
+      inverse; the chain validates two 32-byte halves at entry and after
+      each link. **Decryption must walk
       `specs.reverse`** and call `inverse` — undoing chain step 1
       last — this transpose relationship is the crux of the design and is
       mirrored/proved for the abstract Feistel model in the theory file,
       not for arbitrary custom IO pairs.
+    - `encryptMessageIO`/`decryptMessageIO` pad/unpad arbitrary byte messages
+      with PKCS#7 and process 64-byte blocks independently. This deterministic,
+      unauthenticated framing exposes repeated blocks; it is not a secure
+      message-encryption mode and padding is not authentication.
     - `feistelWithHash256`, `feistelWithAES256ECB`, `feistelWithHKDF`, etc.
       adapt `Crypto` functions into the `ByteArray → IO ByteArray` shape a
       Feistel round expects.

@@ -1,13 +1,9 @@
 name: Lean Action CI
 
-# Only run once a pull request targeting the default branch has actually been
-# merged (not merely opened/synchronized/closed-without-merging). This keeps
-# CI from firing on every push/PR update and instead validates the state of
-# the default branch after each merge. `workflow_dispatch` is kept as a
-# manual escape hatch for re-running CI on demand.
 on:
   pull_request:
-    types: [closed]
+    branches: ["master"]
+  push:
     branches: ["master"]
   workflow_dispatch:
 
@@ -16,7 +12,6 @@ permissions:
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true
     runs-on: ubuntu-latest
 
     steps:
@@ -26,32 +21,15 @@ jobs:
       - name: Install OpenSSL and native build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y libssl-dev cmake build-essential
+          sudo apt-get install -y libssl-dev build-essential
 
-      # Installs elan/Lean matching `lean-toolchain` and fetches the Mathlib
-      # `.olean` cache (`lake exe cache get`). The actual `lake build` is run
-      # ourselves below, after the OpenSSL FFI library exists, so that the
-      # `bench` executable (which links against it) also gets built and this
-      # workflow validates the whole project, not just the `Blackworm`
-      # library.
+      # Install the pinned toolchain and fetch Mathlib's compiled cache.
       - name: Set up Lean 4 toolchain and fetch Mathlib cache
         uses: leanprover/lean-action@v1
         with:
           build: "false"
 
-      # Build the openssl_crypto C FFI library used by Blackworm/OpenSSLBindings.lean
-      # (same steps as build.sh, without its interactive prerequisite checks).
-      - name: Build the OpenSSL FFI library
-        run: |
-          mkdir -p build
-          cd build
-          cmake -DOPENSSL_DIR=/usr ..
-          make -j"$(nproc)"
-
-      # Builds every target in the project: the `Blackworm` library, the
-      # `Bench` benchmarking library, the `Test` correctness-test library,
-      # and the `bench`/`test` executables (both link against the OpenSSL
-      # FFI library built above).
+      # Lake tracks and builds the native FFI dependency for both executables.
       - name: Build the Lean project
         run: lake build Blackworm Bench bench Test test
 

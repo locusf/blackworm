@@ -46,8 +46,8 @@ def decryptAES256ECB (key : AES256Key) (ciphertext : ByteArray) : IO ByteArray :
     throw (IO.userError "Invalid AES-256 key size")
   aes256ECBDecrypt key.bytes ciphertext
 
--- AES-256-ECB decryption with PKCS#7 padding disabled: a total, always-
--- succeeding keyed permutation over exact multiples of the AES block size
+-- AES-256-ECB decryption with PKCS#7 padding disabled: a keyed permutation
+-- over exact multiples of the AES block size. Native failures throw IO errors
 -- (there is no notion of "invalid ciphertext" to reject once padding is
 -- off). Unlike `decryptAES256ECB`, this is safe to call on data that was
 -- never actually encrypted -- e.g. to use AES decryption purely as a

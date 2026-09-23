@@ -21,7 +21,7 @@ The Blackworm project now includes full support for:
 
 ```
 blackworm/
-├── lakefile.toml                    # Lake build configuration with OpenSSL
+├── lakefile.lean                    # Lake build configuration with tracked native FFI
 ├── lean-toolchain                   # Lean version specification
 ├── CMakeLists.txt                   # Build configuration for C FFI
 ├── openssl_crypto.c                 # Native C FFI bindings to OpenSSL
@@ -50,9 +50,9 @@ blackworm/
    sudo dnf install openssl-devel
    ```
 
-2. **Lean 4.28.0-rc1** (automatically managed by Lake)
+2. **Lean version pinned in `lean-toolchain`** (managed by elan)
 
-3. **CMake** (for building C FFI):
+3. **A system C compiler** (`cc`). CMake is optional for a standalone FFI build:
    ```bash
    sudo apt-get install cmake  # Ubuntu/Debian
    brew install cmake          # macOS
@@ -63,16 +63,26 @@ blackworm/
 1. **Using Lake (Lean build system)**:
    ```bash
    lake build
+   lake build test bench     # also builds and links the native FFI automatically
+   lake exe test
    ```
 
-2. **Building C FFI library separately** (if needed):
+   The FFI shim is linked statically; OpenSSL is linked via `-lssl -lcrypto`
+   according to the toolchain's static/dynamic library selection.
+   No CMake prebuild or `build/` runtime library is required. For a
+   nonstandard installation use
+   `lake -KopensslPrefix=/path/to/openssl build test bench`.
+
+2. **Building the C FFI library separately** (optional):
    ```bash
-   mkdir build
-   cd build
-   cmake ..
-   make
-   sudo make install
+   cmake -S . -B build
+   cmake --build build
    ```
+
+Native failures are catchable IO errors. Authenticated decryption returns
+`none` for an authentication failure; initialization, tag setup, and update
+failures throw instead. Invalid PKCS#7 padding in AES-ECB/CBC also throws.
+Lean-runtime allocation failures are not converted by these bindings.
 
 ## API Reference
 
@@ -288,4 +298,3 @@ To add new cryptographic functions:
 3. Add high-level wrappers to `CryptoInterface.lean`
 4. Include examples in `CryptoExamples.lean`
 5. Update this documentation
-

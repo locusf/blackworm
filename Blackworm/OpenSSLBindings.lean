@@ -17,10 +17,11 @@ opaque aes256ECBEncrypt (key : ByteArray) (plaintext : ByteArray) : IO ByteArray
 @[extern "openssl_aes_256_ecb_decrypt"]
 opaque aes256ECBDecrypt (key : ByteArray) (ciphertext : ByteArray) : IO ByteArray
 
--- AES-256-ECB Decrypt, PKCS#7 padding disabled: a total, always-succeeding
+-- AES-256-ECB Decrypt, PKCS#7 padding disabled: a
 -- keyed permutation over exact multiples of the AES block size (16 bytes),
 -- unlike `aes256ECBDecrypt` (which validates and strips PKCS#7 padding, and
--- can fail on non-ciphertext input). Suitable for using AES decryption as a
+-- can fail on non-ciphertext input). Native failures throw IO errors.
+-- Suitable for using AES decryption as a
 -- one-way scrambling function (e.g. a Feistel round function) on data that
 -- was never actually encrypted.
 @[extern "openssl_aes_256_ecb_decrypt_nopad"]

@@ -1,19 +1,19 @@
 # Visualization: correctness tests
 
-The suite executes eleven cases via `lake exe test`. Three cipher-pair
+The suite executes seventeen cases via `lake exe test`. Three cipher-pair
 checks run first: empty-chain identity in both directions, custom block
 transformations with distinct inverses (including exact invocation order
 and both round-trip directions), and propagation of forward/inverse errors.
-Sections 1–8 below describe the remaining eight Feistel/crypto cases in
+Sections 1–8 below describe the next eight Feistel/crypto cases in
 the order returned by [`defaultCases`](../Test/Suite.lean). They are a
 coverage map, not live results. The [`runner`](../Test.lean) prints the
-actual PASS/FAIL status.
+actual PASS/FAIL status. Six additional cases are described after section 8.
 
 ## Execution and reporting
 
 ```mermaid
 flowchart TD
-    START["lake exe test"] --> BUILD["Build the default suite: 11 cases"]
+    START["lake exe test"] --> BUILD["Build the default suite: 17 cases"]
     BUILD --> NEXT["Run next case"]
     NEXT --> RESULT{"Returns true?"}
     NEXT --> EXCEPTION["Unexpected IO exception"]
@@ -32,7 +32,7 @@ flowchart TD
 A failed case does not stop later cases. Each case produces one status
 line, even when it checks multiple functions or inputs. Section numbers
 1–8 refer to the Feistel/crypto cases, not their positions in the full
-eleven-case runner output.
+seventeen-case runner output.
 
 ## Cipher-pair checks (run before sections 1–8)
 
@@ -131,13 +131,14 @@ every input changes or that wrong-order inversion can never match.
 flowchart LR
     INPUT["The same 4 blocks used in case 2"] --> ENC["feistelCipherIO with AES-256-ECB encryption as F"]
     ENC --> DEC["Map feistelRoundInvIO with the same F over ciphertext blocks"]
-    DEC --> ZIP["Zip original and recovered lists"]
+    DEC --> LENGTH["Assert ciphertext and recovered list lengths match input"]
+    LENGTH --> ZIP["Zip original and recovered lists"]
     ZIP --> CHECK["Check both halves of every paired block"]
 ```
 
 This exercises one Feistel round per block, not the seven-link mixed
-chain. The implementation compares zipped pairs; it does not separately
-assert the recovered list length.
+chain. Both output list lengths must match the input before zipped
+comparisons can pass, guarding against dropped or duplicated blocks.
 
 ## 6, 7 and 8. AES wrapper behavior
 
@@ -159,11 +160,24 @@ satisfies the assertion. Case 8 uses
 `The quick brown fox jumps over the lazy dog` to exercise genuine padded
 AES round trips independently of Feistel inversion.
 
+## Additional regression coverage (runner positions 12–17)
+
+| Position | Case | Assertions |
+| --- | --- | --- |
+| 12 | Generated chains | Sixteen deterministic nonlinear byte patterns, rotated primitive orders, and chain lengths 0–14 produce 240 cases; both round-trip directions recover the input. |
+| 13 | Block validation | Invalid left/right lengths are rejected at entry, including empty chains. Size-changing custom forward/inverse members throw before a subsequent link runs. |
+| 14 | Padded messages | Every message length 0–193 round-trips through both empty and mixed chains; ciphertext size is exactly `(size / 64 + 1) * 64`. An empty message produces a full block of padding bytes. |
+| 15 | Invalid framing | Empty/non-aligned ciphertext, padding values 0 and above 64, and inconsistent trailing padding bytes throw IO errors. |
+| 16 | Native errors | Empty padded AES ciphertext, raw no-padding misalignment, and raw PBKDF2 with zero iterations throw catchable IO errors. SHA-256's empty-input known answer still matches afterward. |
+| 17 | AEAD semantics | AES-GCM and ChaCha20-Poly1305 recover valid plaintext, return `none` for a changed authentication tag, and throw for invalid tag setup. |
+
 ## Scope
 
 All keys, IVs, salt, info, and block patterns are deterministic fixtures.
-These are runtime correctness checks, not randomized tests, known-answer
-cryptographic vectors, security proofs, or performance measurements.
+The generated cases are reproducible coverage, not randomized fuzzing or
+exhaustive proofs. Apart from the single SHA-256 known answer, these are
+round-trip/error tests rather than cryptographic vector suites. They do not
+establish cryptographic security or measure performance.
 See the [cipher diagrams](cipher-visualization.md) for the construction
 and the [README](../README.md#formal-verification) for the separate Lean
 proofs.
