@@ -62,6 +62,10 @@ decrypt wrappers are total on block-sized input but still reject
 non-block-multiple input. Unlike `bench`, `lake exe test` exits with a
 nonzero status if any case fails, making it suitable as a CI gate.
 
+The suite also checks empty-chain identity, custom forward/inverse block
+pairs (both round-trip directions and invocation order), and propagation
+of errors from either member of a pair.
+
 Build and run it with:
 
 ```bash
@@ -71,14 +75,35 @@ lake exe test                # run the suite; exits 0 iff every case passed
 ```
 
 See [the test visualization](docs/test-visualization.md) for diagrams of
-all eight executed cases, their inputs and assertions, and the runner's
+all eleven executed cases, their inputs and assertions, and the runner's
 PASS/FAIL and exit-status flow.
+
+## Cipher-chain API
+
+The chain consumes a `List CipherPair`. Each pair contains `forward` and
+`inverse` functions of type `Block → IO Block`. `feistelChainIO` applies
+the forward members in list order; `feistelDechainIO` applies the inverse
+members in reverse order.
+
+Use `CipherPair.ofFeistel` to adapt existing half-block functions:
+
+```lean
+let specs : List CipherPair :=
+  [feistelWithHash256, feistelWithHash3_256].map CipherPair.ofFeistel
+let ciphertext ← feistelChainIO specs block
+let recovered ← feistelDechainIO specs ciphertext
+```
+
+The adapter uses the same deterministic primitive in both Feistel
+directions, not the primitive's inverse. Custom pairs must preserve block
+sizes and supply mutually inverse transformations; the type does not
+enforce these laws.
 
 ## Visualization
 
 See [docs/cipher-visualization.md](docs/cipher-visualization.md) for Mermaid
 diagrams of the generated block cipher: the 512-bit block split into two
-256-bit halves (each round-function pair encrypting one 256-bit half), a
+256-bit halves (each Feistel round transforms one 256-bit half), a
 single Feistel round, multiple
 `(round function, round key)` pairs combined into one round via a cipher set,
 the chain linking blocks/rounds with distinct cipher sets, and the
@@ -106,7 +131,9 @@ as for the fixed-`F` case, and `decryptChain_eq_foldl_reverse` makes
 explicit the **transpose** required to invert such a chain: decryption must
 process the per-block cipher sets in the reverse of the order they were
 applied. `Blackworm/Basic.lean` mirrors this concretely with
-`feistelChainIO`/`feistelDechainIO`.
+`CipherPair.ofFeistel` links passed to `feistelChainIO`/`feistelDechainIO`.
+These are proofs of the abstract Feistel model, not verification of
+arbitrary custom `CipherPair` functions, IO effects, or the OpenSSL FFI.
 
 ## GitHub configuration
 

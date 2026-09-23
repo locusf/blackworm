@@ -5,7 +5,7 @@ set_option eval.type true
 --set_option trace.Meta.synthInstance true
 
 -- The cipher operates on 512-bit blocks. Each block is split into two
--- 256-bit halves, and every round-function pair encrypts exactly one
+-- 256-bit halves, and every Feistel round transforms exactly one
 -- 256-bit half per round (its output is fitted to 256 bits before the
 -- XOR, so the halves never grow or shrink).
 --
@@ -60,7 +60,7 @@ def Block.ofBits512 (data : ByteArray) : IO Block := do
 def Block.toBytes (b : Block) : ByteArray :=
   b.left ++ b.right
 
--- One Feistel round on a 512-bit block: the round-function pair `f`
+-- One Feistel round on a 512-bit block: the round function `f`
 -- encrypts the 256-bit right half, its output is fitted to 256 bits, and
 -- the result is XORed into the 256-bit left half. Halves keep their size.
 def feistelRound (b : Block) (f : ByteArray → ByteArray) : Block :=
@@ -147,7 +147,8 @@ def feistelWithAES256CBC (key : Crypto.AES256Key) (iv : Crypto.AES256IV) (data :
 -- catchable `IO` error) if the input isn't genuine padded AES-256-ECB
 -- ciphertext produced under the same key. Only call it on the output of
 -- `feistelWithAES256ECB` (or `Crypto.encryptAES256ECB`) with the same key --
--- i.e. use it to undo one link of a chain, not as a generic round function.
+-- It does not undo a Feistel link: that inverse reuses the forward round
+-- function rather than decrypting the primitive's output.
 def feistelWithAES256ECBDecrypt (key : Crypto.AES256Key) (data : ByteArray) : IO ByteArray := do
   Crypto.decryptAES256ECB key data
 

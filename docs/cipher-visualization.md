@@ -4,12 +4,12 @@ This document visualizes how the generated block cipher works **as currently
 implemented**, layer by layer:
 
 0. the **512-bit block layout**: each block is 512 bits (64 bytes), split
-   into two 256-bit halves, and every round-function pair encrypts exactly
+   into two 256-bit halves, and every Feistel round transforms exactly
    one 256-bit half per round (`BLOCK_BITS`/`HALF_BLOCK_BITS`/`fitTo`/
    `Block.ofBits512` in `Blackworm/Basic.lean`),
 1. a single Feistel round (`feistelRound`/`feistelRoundIO` in
    `Blackworm/Basic.lean`, `round` in `Blackworm/FeistelTheory.lean`),
-2. **multiple function pairs combined inside one round** — a *cipher set*
+2. **multiple function/key pairs combined inside one round** — a *cipher set*
    (`CipherSet`/`combineCipherSet`/`cipherSetF` in
    `Blackworm/FeistelTheory.lean`),
 3. the **chain**: a sequence of rounds/blocks where each link can use a
@@ -35,7 +35,7 @@ implemented**, layer by layer:
 >   into **one** round via `combineCipherSet`, and each chain link is a
 >   `RoundSpec` pair `⟨F, k⟩`.
 >
-> So "multiple function pairs per round" is a proved capability of the
+> So "multiple function/key pairs per round" is a proved capability of the
 > abstract model (`MultiRound` section) which the concrete chain can realize
 > by composing/mixing primitives inside one `ByteArray → IO ByteArray`
 > closure. The concrete chain stores a `List CipherPair`: each pair has
@@ -48,7 +48,7 @@ implemented**, layer by layer:
 A block is **512 bits** (`BLOCK_BITS`; 64 bytes, `BLOCK_SIZE`).
 `Block.ofBits512` splits it into a 256-bit left half and a 256-bit right half
 (`HALF_BLOCK_BITS`; 32 bytes each, `HALF_BLOCK_SIZE`); `Block.toBytes`
-reassembles it. Each round-function pair encrypts exactly one 256-bit half per
+reassembles it. Each Feistel round transforms exactly one 256-bit half per
 round: a 256-bit SHA-256/SHA3-256 digest already matches the half exactly, and
 for any other natural output size (a PKCS#7-padded AES ciphertext, an HKDF
 output, ...) `fitTo` cycles or truncates it to 256 bits before it is XORed
@@ -59,7 +59,7 @@ flowchart TB
     B["512-bit block (BLOCK_BITS)"]
     B -->|"Block.ofBits512"| L["L — 256 bits\n(HALF_BLOCK_BITS)"]
     B -->|"Block.ofBits512"| R["R — 256 bits\n(HALF_BLOCK_BITS)"]
-    R --> F["round-function pair F(k, ·)\n(natural output size varies)"]
+    R --> F["round function F(k, ·)\n(natural output size varies)"]
     F -->|"fitTo 256 bits"| OUT["256-bit keystream\n— encrypts one 256-bit half"]
     style B fill:#e3f2fd,stroke:#1565c0
     style OUT fill:#e8f5e9,stroke:#2e7d32
@@ -69,7 +69,7 @@ flowchart TB
 
 `feistelRound b f = { left := b.right, right := b.left ⊕ fitTo 256 bits (f b.right) }`
 (`⊕` is `xorByteArrays`; abstractly, any cancellative `xor`). Both halves are
-256 bits, so each round-function pair encrypts a 256-bit block of the state.
+256 bits, so each Feistel round transforms a 256-bit half of the state.
 
 ```mermaid
 flowchart LR
@@ -81,7 +81,7 @@ flowchart LR
         L2["L' = R (256 bits)"]
         R2["R' = L ⊕ fitTo 256 bits (F(k, R)) (256 bits)"]
     end
-    R --> F["F(k, ·)  — round function pair (F, k)"]
+    R --> F["F(k, ·) — function/key pair (F, k)"]
     F --> FIT["fitTo 256 bits"]
     FIT --> X(("⊕"))
     L --> X
@@ -94,7 +94,7 @@ Because only XOR and a swap touch the state, the round is invertible for
 (`round_left_inv` / `round_right_inv`, mirrored concretely by
 `feistelRoundInvIO`).
 
-## 2. Multiple function pairs in one round: the cipher set
+## 2. Multiple function/key pairs in one round: the cipher set
 
 A `CipherSet` is a list of `(Fᵢ, kᵢ)` pairs. `combineCipherSet` applies every
 pair to the *same* right half and XOR-folds the results; `cipherSetF`
@@ -125,29 +125,34 @@ applying each `CipherPair.forward`. For Feistel links, construct the pairs
 with `CipherPair.ofFeistel`; each such link encrypts a 256-bit half.
 Custom pairs may instead supply any size-preserving, mutually inverse
 block transformations. Abstractly, `encryptChain` models the Feistel case
-same over `List (RoundSpec α)`, where each `RoundSpec ⟨Fᵢ, kᵢ⟩` may itself be
+over `List (RoundSpec α)`, where each `RoundSpec ⟨Fᵢ, kᵢ⟩` may itself be
 a whole cipher set packaged via `RoundSpec.ofCipherSet`.
 
 ```mermaid
 flowchart LR
-    P["Plaintext block\n(L₀, R₀)"] --> RD1
-    subgraph RD1["Chain link 1 — RoundSpec ⟨F₁, k₁⟩"]
-        S1["e.g. feistelWithHash256"]
+    P["Plaintext block\n(L₀, R₀)"] --> S1
+    subgraph RD1["CipherPair 1 — e.g. SHA-256"]
+        S1["forward: Feistel round"] --- U1["inverse: inverse Feistel round"]
     end
-    RD1 --> B1["(L₁, R₁)"] --> RD2
-    subgraph RD2["Chain link 2 — RoundSpec ⟨F₂, k₂⟩"]
-        S2["e.g. feistelWithAES256ECB key"]
+    S1 --> B1["(L₁, R₁)"] --> S2
+    subgraph RD2["CipherPair 2 — e.g. AES-256-ECB encryption"]
+        S2["forward: Feistel round"] --- U2["inverse: inverse Feistel round"]
     end
-    RD2 --> B2["(L₂, R₂)"] --> RD3
-    subgraph RD3["Chain link 3 — cipher set as one RoundSpec"]
-        S3["cipherSetF [(F₃,k₃), (F₄,k₄)]\n(multiple pairs XOR-folded)"]
+    S2 --> B2["(L₂, R₂)"] --> S3
+    subgraph RD3["CipherPair 3 — mixed round function"]
+        S3["forward: Feistel round"] --- U3["inverse: inverse Feistel round"]
     end
-    RD3 --> C["Ciphertext block\n(L₃, R₃)"]
+    S3 --> C["Ciphertext block\n(L₃, R₃)"]
     style P fill:#e3f2fd,stroke:#1565c0
     style C fill:#fce4ec,stroke:#ad1457
 ```
 
-Each link in this diagram is a full Feistel round from §1; the links differ only in *which*
+Arrows show encryption; undirected lines group the members of each pair.
+Each pair here is built with `CipherPair.ofFeistel`, using a deterministic
+primitive or mixed half-block function. The abstract counterparts are
+`RoundSpec` values, with `RoundSpec.ofCipherSet` modeling the mixed case.
+
+Each forward member is a full Feistel round from §1; the links differ in *which*
 round function (or combined cipher set) they use — this is what makes the
 chain "dynamically generated" (`deriveChain` in the theory file even derives
 the whole spec list from a master key).
@@ -165,17 +170,17 @@ their inverse relationship is the caller's responsibility.
 
 ```mermaid
 flowchart RL
-    C["Ciphertext\n(L₃, R₃)"] --> I3["invert link 3\nroundInv ⟨F₃-set⟩"]
-    I3 --> I2["invert link 2\nroundInv ⟨F₂, k₂⟩"]
-    I2 --> I1["invert link 1\nroundInv ⟨F₁, k₁⟩"]
+    C["Ciphertext\n(L₃, R₃)"] --> I3["pair 3.inverse"]
+    I3 --> I2["pair 2.inverse"]
+    I2 --> I1["pair 1.inverse"]
     I1 --> P["Plaintext\n(L₀, R₀)"]
     style C fill:#fce4ec,stroke:#ad1457
     style P fill:#e3f2fd,stroke:#1565c0
 ```
 
 ```text
-encrypt:  b ─[F₁]→ ─[F₂]→ ─[F₃]→ c        (specs, left to right)
-decrypt:  c ─[F₃⁻¹]→ ─[F₂⁻¹]→ ─[F₁⁻¹]→ b  (specs.reverse — the transpose)
+encrypt: b -> pair1.forward -> pair2.forward -> pair3.forward -> c
+decrypt: c -> pair3.inverse -> pair2.inverse -> pair1.inverse -> b
 ```
 
 ## Where each piece lives
@@ -183,11 +188,12 @@ decrypt:  c ─[F₃⁻¹]→ ─[F₂⁻¹]→ ─[F₁⁻¹]→ b  (specs.reve
 | Concept in the diagrams | Concrete (`Blackworm/Basic.lean`) | Abstract proof (`Blackworm/FeistelTheory.lean`) |
 | --- | --- | --- |
 | 512-bit block, 256-bit halves | `BLOCK_BITS`/`BLOCK_SIZE`, `HALF_BLOCK_BITS`/`HALF_BLOCK_SIZE`, `Block.ofBits512`, `Block.toBytes`, `emptyHalf` | `HalfBlock := Bits 256`, `Block512 := Block HalfBlock` (§`Concrete`; `Block α` itself is size-agnostic) |
-| Fitting a pair's output to one 256-bit half | `fitTo` | — (abstract `F` already maps `α → α`) |
+| Fitting a round function's output to one 256-bit half | `fitTo` | — (abstract `F` already maps `α → α`) |
 | Block `(L, R)` | `Block` (`ByteArray` halves) | `Block α` |
 | One round | `feistelRound`, `feistelRoundIO` | `round`, `round_left_inv`, `round_right_inv` |
 | Round inverse | `feistelRoundInvIO` | `roundInv` |
-| Multiple function pairs in one round | mix primitives inside one `ByteArray → IO ByteArray` closure | `CipherSet`, `combineCipherSet`, `cipherSetF` (§`MultiRound`) |
-| Chain of heterogeneous rounds/blocks | `feistelChainIO` | `RoundSpec`, `encryptChain` (§`Chain`) |
-| Reverse-order (transpose) decryption | `feistelDechainIO` (walks `specs.reverse`) | `decryptChain`, `decryptChain_eq_foldl_reverse` |
-| End-to-end correctness | — | `decryptChain_encryptChain`, `feistelDecrypt_feistelEncrypt` |
+| Multiple function/key pairs in one round | mix primitives inside one `ByteArray → IO ByteArray` closure | `CipherSet`, `combineCipherSet`, `cipherSetF` (§`MultiRound`) |
+| Forward/inverse block pair | `CipherPair`, `CipherPair.ofFeistel` | `round`/`roundInv` for a `RoundSpec` (Feistel case only) |
+| Chain of heterogeneous rounds/blocks | `feistelChainIO` calls each pair's `forward` | `RoundSpec`, `encryptChain` (§`Chain`, Feistel case) |
+| Reverse-order (transpose) decryption | `feistelDechainIO` calls `inverse` over `specs.reverse` | `decryptChain`, `decryptChain_eq_foldl_reverse` |
+| Abstract Feistel end-to-end correctness | — (not a proof of custom IO pairs or FFI) | `decryptChain_encryptChain`, `feistelDecrypt_feistelEncrypt` |

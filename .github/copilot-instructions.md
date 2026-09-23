@@ -31,13 +31,12 @@ lake build          # builds the Lean project (pulls Mathlib per lakefile.toml)
 - Lean toolchain version is pinned in `lean-toolchain`
   (`leanprover/lean4:v4.34.0`); Mathlib is pinned to `v4.34.0` in
   `lakefile.toml`'s `[[require]]` block — keep these in sync when upgrading.
-- There is no separate test suite/runner. `Blackworm/CryptoExamples.lean`
-  contains `example : IO Unit := do ...` blocks that exercise every crypto
-  primitive end-to-end (encrypt/decrypt round-trips, GCM/ChaCha20 tag
-  verification); `lake build` type-checks these, and `#eval` on the relevant
-  `example`/`def` is how you'd manually exercise them in the Lean server.
-  Proof obligations in `FeistelTheory.lean` are checked as part of the same
-  `lake build`.
+- `lake exe test` runs the eleven correctness cases in `Test/Suite.lean`
+  through `Test.lean`, exiting nonzero on failure. Build the OpenSSL C FFI
+  library first with `./build.sh`. The suite covers cipher pairs, Feistel
+  chains and rounds, and AES wrapper behavior. `Blackworm/CryptoExamples.lean`
+  additionally contains illustrative `example : IO Unit` blocks.
+  Proof obligations in `FeistelTheory.lean` are checked by `lake build`.
 
 ## Architecture
 
@@ -67,7 +66,8 @@ lake build          # builds the Lean project (pulls Mathlib per lakefile.toml)
       inverse and preserve block sizes. **Decryption must walk
       `specs.reverse`** and call `inverse` — undoing chain step 1
       last — this transpose relationship is the crux of the design and is
-      mirrored/proved in the theory file.
+      mirrored/proved for the abstract Feistel model in the theory file,
+      not for arbitrary custom IO pairs.
     - `feistelWithHash256`, `feistelWithAES256ECB`, `feistelWithHKDF`, etc.
       adapt `Crypto` functions into the `ByteArray → IO ByteArray` shape a
       Feistel round expects.
@@ -90,7 +90,7 @@ lake build          # builds the Lean project (pulls Mathlib per lakefile.toml)
     per round.
   - `Chain` — generalizes rounds to `RoundSpec`/`encryptChain`/`decryptChain`
     over a heterogeneous `List (RoundSpec α)`, the abstract counterpart of
-    `feistelChainIO`/`feistelDechainIO`. `decryptChain_eq_foldl_reverse` is
+    chains built with `CipherPair.ofFeistel`. `decryptChain_eq_foldl_reverse` is
     the formal statement of the transpose/reverse requirement above.
 
 ## Conventions

@@ -4,7 +4,7 @@ The suite executes eleven cases via `lake exe test`. Three cipher-pair
 checks run first: empty-chain identity in both directions, custom block
 transformations with distinct inverses (including exact invocation order
 and both round-trip directions), and propagation of forward/inverse errors.
-The diagrams below describe the remaining eight Feistel/crypto cases in
+Sections 1–8 below describe the remaining eight Feistel/crypto cases in
 the order returned by [`defaultCases`](../Test/Suite.lean). They are a
 coverage map, not live results. The [`runner`](../Test.lean) prints the
 actual PASS/FAIL status.
@@ -29,8 +29,18 @@ flowchart TD
     SUMMARY -->|Yes| BAD["Print failure count; exit 1"]
 ```
 
-A failed case does not stop later cases. Each numbered case below produces
-one status line, even when it checks multiple functions or inputs.
+A failed case does not stop later cases. Each case produces one status
+line, even when it checks multiple functions or inputs. Section numbers
+1–8 refer to the Feistel/crypto cases, not their positions in the full
+eleven-case runner output.
+
+## Cipher-pair checks (run before sections 1–8)
+
+| Runner position | Check | Assertions |
+| --- | --- | --- |
+| 1 | Empty chain | Both encryption and decryption return the input block unchanged. |
+| 2 | Custom pairs | Pair 1 adds one to each left-half byte, with subtraction as its inverse; pair 2 swaps halves in both directions. Encryption matches the expected block, both round-trip directions recover the input, and the encrypt-then-decrypt call order is exactly `shift forward`, `swap forward`, `swap inverse`, `shift inverse`. |
+| 3 | Error propagation | A failing pair throws an IO error in each direction; neither chain function suppresses it. The assertions accept any IO error, not a specific message. |
 
 ## 1. Single-round recovery with seven round functions
 
@@ -51,23 +61,46 @@ of the hash, HKDF, or AES operation.
 
 ## 2. Seven-link mixed-chain recovery
 
-Each node below is a **Feistel round using the named function**, not a raw
-primitive applied directly to the entire block.
+Each link is a `CipherPair.ofFeistel F`, containing **two block functions**:
+`forward b = feistelRoundIO b F` and
+`inverse b = feistelRoundInvIO b F`. Both reuse the same half-block
+primitive `F`; the inverse member is not the inverse of that primitive.
+Encryption follows the forward members from 1 to 7; decryption follows
+the inverse members from 7 to 1.
 
 ```mermaid
 flowchart TD
     INPUT["For each of 4 input blocks"] --> E["feistelChainIO"]
-    E --> F1["1. SHA-256"]
-    F1 --> F2["2. AES-256-ECB encryption"]
-    F2 --> F3["3. AES-256-ECB decryption, no padding"]
-    F3 --> F4["4. AES-256-CBC encryption"]
-    F4 --> F5["5. AES-256-CBC decryption, no padding"]
-    F5 --> F6["6. HKDF"]
-    F6 --> F7["7. SHA3-256"]
+    subgraph P1["Pair 1: F = SHA-256"]
+        F1["forward: Feistel round"] --- I1["inverse: inverse Feistel round"]
+    end
+    subgraph P2["Pair 2: F = AES-256-ECB encryption"]
+        F2["forward: Feistel round"] --- I2["inverse: inverse Feistel round"]
+    end
+    subgraph P3["Pair 3: F = AES-256-ECB decryption, no padding"]
+        F3["forward: Feistel round"] --- I3["inverse: inverse Feistel round"]
+    end
+    subgraph P4["Pair 4: F = AES-256-CBC encryption"]
+        F4["forward: Feistel round"] --- I4["inverse: inverse Feistel round"]
+    end
+    subgraph P5["Pair 5: F = AES-256-CBC decryption, no padding"]
+        F5["forward: Feistel round"] --- I5["inverse: inverse Feistel round"]
+    end
+    subgraph P6["Pair 6: F = HKDF"]
+        F6["forward: Feistel round"] --- I6["inverse: inverse Feistel round"]
+    end
+    subgraph P7["Pair 7: F = SHA3-256"]
+        F7["forward: Feistel round"] --- I7["inverse: inverse Feistel round"]
+    end
+    E --> F1 --> F2 --> F3 --> F4 --> F5 --> F6 --> F7
     F7 --> C["Ciphertext block"]
-    C --> D["feistelDechainIO: inverse Feistel rounds, functions 7 to 1"]
-    D --> CHECK["Check both recovered halves equal the input"]
+    C --> D["feistelDechainIO"]
+    D --> I7 --> I6 --> I5 --> I4 --> I3 --> I2 --> I1
+    I1 --> CHECK["Check both recovered halves equal the input"]
 ```
+
+The undirected lines group the two members of each pair; arrows show
+execution order.
 
 The four blocks have all-zero halves, all-`0xFF` halves, patterned halves
 with seeds `0x5A`/`0xA5`, and patterned halves with seeds `0x01`/`0x7E`.
@@ -80,10 +113,10 @@ the `0x5A` pattern and independently encrypting it with the seven-link chain.
 
 ```mermaid
 flowchart TD
-    B["Patterned plaintext block"] --> E["feistelChainIO: functions 1 to 7"]
+    B["Patterned plaintext block"] --> E["feistelChainIO: pair.forward, 1 to 7"]
     E --> C["Ciphertext"]
     C --> CHANGE["Case 3: left differs AND right differs from plaintext"]
-    C --> WRONG["Case 4: inverse Feistel rounds in WRONG order, 1 to 7"]
+    C --> WRONG["Case 4: pair.inverse in WRONG order, 1 to 7"]
     WRONG --> DIFF["Left differs OR right differs from plaintext"]
     CHANGE --> P3["Pass only if both halves changed"]
     DIFF --> P4["Pass only if the original block was NOT recovered"]
